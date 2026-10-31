@@ -5,9 +5,31 @@
  * Zod schemas that validate requests, so the docs can't drift from the code.
  */
 import { z } from 'zod';
-import { loginSchema } from '@/modules/auth/auth.schema';
+import {
+  changePasswordSchema,
+  disableTwoFactorSchema,
+  enableTwoFactorSchema,
+  updateProfileSchema,
+} from '@/modules/account/account.routes';
+import { suspendSchema } from '@/modules/admin/admin.routes';
+import {
+  emailSchema,
+  loginSchema,
+  registerSchema,
+  resetPasswordSchema,
+  switchOrganisationSchema,
+  tokenSchema,
+  twoFactorChallengeSchema,
+} from '@/modules/auth/auth.schema';
 import { createCampaignSchema, updateCampaignSchema } from '@/modules/campaigns/campaigns.schema';
 import { eventBatchSchema } from '@/modules/delivery/delivery.schema';
+import {
+  acceptInvitationSchema,
+  changeRoleSchema,
+  createOrganisationSchema,
+  invitationTokenSchema,
+  inviteSchema,
+} from '@/modules/team/team.schema';
 
 const toSchema = (schema: z.ZodType): unknown => {
   const jsonSchema: Record<string, unknown> = z.toJSONSchema(schema, {
@@ -45,6 +67,16 @@ const campaignId = {
   schema: { type: 'string' },
 };
 
+const pathId = (name: string, description: string): unknown => ({
+  name,
+  in: 'path',
+  required: true,
+  description,
+  schema: { type: 'string' },
+});
+
+const paging = [query('page', 'Page number, from 1'), query('limit', 'Items per page')];
+
 const dateRange = [
   query('from', 'Start of the period (ISO 8601). Defaults to 7 days before "to".'),
   query('to', 'End of the period (ISO 8601). Defaults to now.'),
@@ -68,13 +100,17 @@ export const openApiDocument = {
     title: 'Campaign Analytics API',
     version: '1.0.0',
     description:
-      'Ad campaigns, ad decisions and event tracking for a streaming service. Sign in with ' +
-      '`POST /auth/login`, then press Authorize and paste the token.',
+      'Ad campaigns, teams, ad decisions and event tracking for a streaming service. Sign in ' +
+      'with `POST /auth/login`, then press Authorize and paste the token. Access tokens last ' +
+      '15 minutes; `POST /auth/refresh` replaces them using the httpOnly cookie.',
     license: { name: 'MIT', url: 'https://opensource.org/license/mit' },
   },
   tags: [
     { name: 'Service', description: 'Status and configuration' },
-    { name: 'Auth', description: 'Signing in' },
+    { name: 'Auth', description: 'Accounts and signing in' },
+    { name: 'Account', description: 'Your password, devices and two-factor login' },
+    { name: 'Team', description: 'Your active organisation' },
+    { name: 'Admin', description: 'The platform admin console' },
     { name: 'Campaigns', description: 'Managing campaigns' },
     { name: 'Analytics', description: 'Measuring performance' },
     { name: 'Catalogue', description: 'Shows that ads can run against' },
@@ -101,16 +137,282 @@ export const openApiDocument = {
     '/auth/options': {
       get: {
         tags: ['Auth'],
-        summary: 'See whether this is the public demo',
+        summary: 'See which sign-in options apply here',
         responses: responses('200', 'Sign-in options'),
+      },
+    },
+    '/auth/register': {
+      post: {
+        tags: ['Auth'],
+        summary: 'Create an account and its organisation',
+        description: 'Responds the same way for a taken email, and sends a confirmation link.',
+        requestBody: jsonBody(registerSchema),
+        responses: responses('202', 'Check your email', '403', '422'),
+      },
+    },
+    '/auth/verify-email': {
+      post: {
+        tags: ['Auth'],
+        summary: 'Confirm an email address',
+        requestBody: jsonBody(tokenSchema),
+        responses: responses('200', 'Confirmed', '400', '422'),
+      },
+    },
+    '/auth/resend-verification': {
+      post: {
+        tags: ['Auth'],
+        summary: 'Send the confirmation link again',
+        requestBody: jsonBody(emailSchema),
+        responses: responses('202', 'Sent if the account needs it', '422'),
       },
     },
     '/auth/login': {
       post: {
         tags: ['Auth'],
         summary: 'Sign in and receive a token',
+        description:
+          'With two-factor login on, this returns a challenge token for `POST /auth/two-factor`.',
         requestBody: jsonBody(loginSchema),
-        responses: responses('200', 'Signed in', '401', '422'),
+        responses: responses('200', 'Signed in, or a two-factor challenge', '401', '403', '422'),
+      },
+    },
+    '/auth/two-factor': {
+      post: {
+        tags: ['Auth'],
+        summary: 'Finish signing in with an authenticator or recovery code',
+        requestBody: jsonBody(twoFactorChallengeSchema),
+        responses: responses('200', 'Signed in', '401', '403', '422'),
+      },
+    },
+    '/auth/refresh': {
+      post: {
+        tags: ['Auth'],
+        summary: 'Replace an expired access token using the refresh cookie',
+        responses: responses('200', 'A new access token', '401'),
+      },
+    },
+    '/auth/logout': {
+      post: {
+        tags: ['Auth'],
+        summary: 'End this session',
+        responses: responses('204', 'Signed out'),
+      },
+    },
+    '/auth/forgot-password': {
+      post: {
+        tags: ['Auth'],
+        summary: 'Send a password reset link',
+        requestBody: jsonBody(emailSchema),
+        responses: responses('202', 'Sent if the account exists', '422'),
+      },
+    },
+    '/auth/reset-password': {
+      post: {
+        tags: ['Auth'],
+        summary: 'Choose a new password and sign out every device',
+        requestBody: jsonBody(resetPasswordSchema),
+        responses: responses('200', 'Password changed', '400', '422'),
+      },
+    },
+    '/auth/me': {
+      get: {
+        ...dashboard('Auth'),
+        summary: 'Your profile and organisations',
+        responses: responses('200', 'Your profile', '401'),
+      },
+    },
+    '/auth/switch-organisation': {
+      post: {
+        ...dashboard('Auth'),
+        summary: 'Change the active organisation for this session',
+        requestBody: jsonBody(switchOrganisationSchema),
+        responses: responses('204', 'Switched', '401', '403', '404', '422'),
+      },
+    },
+    '/account/profile': {
+      patch: {
+        ...dashboard('Account'),
+        summary: 'Update your name',
+        requestBody: jsonBody(updateProfileSchema),
+        responses: responses('204', 'Updated', '401', '403', '422'),
+      },
+    },
+    '/account/password': {
+      post: {
+        ...dashboard('Account'),
+        summary: 'Change your password and sign out other devices',
+        requestBody: jsonBody(changePasswordSchema),
+        responses: responses('204', 'Changed', '401', '403', '422'),
+      },
+    },
+    '/account/sessions': {
+      get: {
+        ...dashboard('Account'),
+        summary: 'List your signed-in devices',
+        responses: responses('200', 'Your sessions', '401', '403'),
+      },
+      delete: {
+        ...dashboard('Account'),
+        summary: 'Sign out every device except this one',
+        responses: responses('204', 'Signed out', '401', '403'),
+      },
+    },
+    '/account/sessions/{id}': {
+      delete: {
+        ...dashboard('Account'),
+        summary: 'Sign out one device',
+        parameters: [pathId('id', 'Session ID')],
+        responses: responses('204', 'Signed out', '401', '403', '404'),
+      },
+    },
+    '/account/two-factor/setup': {
+      post: {
+        ...dashboard('Account'),
+        summary: 'Start two-factor setup and get a QR code',
+        responses: responses('200', 'A secret and QR code', '401', '403', '409'),
+      },
+    },
+    '/account/two-factor/enable': {
+      post: {
+        ...dashboard('Account'),
+        summary: 'Turn on two-factor login with a first code',
+        description: 'Returns recovery codes. They are shown only once.',
+        requestBody: jsonBody(enableTwoFactorSchema),
+        responses: responses('200', 'Recovery codes', '401', '403', '409', '422'),
+      },
+    },
+    '/account/two-factor/disable': {
+      post: {
+        ...dashboard('Account'),
+        summary: 'Turn off two-factor login',
+        requestBody: jsonBody(disableTwoFactorSchema),
+        responses: responses('204', 'Turned off', '401', '403', '409', '422'),
+      },
+    },
+    '/team/organisations': {
+      post: {
+        ...dashboard('Team'),
+        summary: 'Create another organisation and switch to it',
+        requestBody: jsonBody(createOrganisationSchema),
+        responses: responses('201', 'Created', '401', '403', '422'),
+      },
+    },
+    '/team/members': {
+      get: {
+        ...dashboard('Team'),
+        summary: 'List members',
+        responses: responses('200', 'Members', '401', '403'),
+      },
+    },
+    '/team/members/{userId}': {
+      patch: {
+        ...dashboard('Team'),
+        summary: "Change a member's role (owners)",
+        parameters: [pathId('userId', 'User ID')],
+        requestBody: jsonBody(changeRoleSchema),
+        responses: responses('204', 'Changed', '401', '403', '404', '409', '422'),
+      },
+      delete: {
+        ...dashboard('Team'),
+        summary: 'Remove a member (owners), or leave yourself',
+        parameters: [pathId('userId', 'User ID')],
+        responses: responses('204', 'Removed', '401', '403', '404', '409'),
+      },
+    },
+    '/team/invitations': {
+      get: {
+        ...dashboard('Team'),
+        summary: 'List open invitations (owners and managers)',
+        responses: responses('200', 'Invitations', '401', '403'),
+      },
+      post: {
+        ...dashboard('Team'),
+        summary: 'Invite someone by email (owners)',
+        requestBody: jsonBody(inviteSchema),
+        responses: responses('201', 'Invited', '401', '403', '409', '422'),
+      },
+    },
+    '/team/invitations/{id}': {
+      delete: {
+        ...dashboard('Team'),
+        summary: 'Cancel an invitation (owners)',
+        parameters: [pathId('id', 'Invitation ID')],
+        responses: responses('204', 'Cancelled', '401', '403', '404'),
+      },
+    },
+    '/team/audit': {
+      get: {
+        ...dashboard('Team'),
+        summary: 'Activity history (owners and managers)',
+        parameters: [...paging, query('action', 'Only actions starting with this')],
+        responses: responses('200', 'Newest first', '401', '403', '422'),
+      },
+    },
+    '/invitations/preview': {
+      post: {
+        tags: ['Team'],
+        summary: 'See what an invitation link is for',
+        requestBody: jsonBody(invitationTokenSchema),
+        responses: responses('200', 'Invitation details', '400', '422'),
+      },
+    },
+    '/invitations/accept': {
+      post: {
+        tags: ['Team'],
+        summary: 'Accept an invitation',
+        description:
+          'New people send a name and password. People with an account send their token.',
+        requestBody: jsonBody(acceptInvitationSchema),
+        responses: responses('200', 'Joined', '400', '401', '422'),
+      },
+    },
+    '/admin/stats': {
+      get: {
+        ...dashboard('Admin'),
+        summary: 'Platform totals',
+        responses: responses('200', 'Totals', '401', '403'),
+      },
+    },
+    '/admin/users': {
+      get: {
+        ...dashboard('Admin'),
+        summary: 'Search users',
+        parameters: [query('q', 'Email or name'), ...paging],
+        responses: responses('200', 'Users', '401', '403', '422'),
+      },
+    },
+    '/admin/users/{id}': {
+      patch: {
+        ...dashboard('Admin'),
+        summary: 'Suspend or restore a user',
+        parameters: [pathId('id', 'User ID')],
+        requestBody: jsonBody(suspendSchema),
+        responses: responses('204', 'Updated', '401', '403', '404', '409', '422'),
+      },
+    },
+    '/admin/organisations': {
+      get: {
+        ...dashboard('Admin'),
+        summary: 'Search organisations',
+        parameters: [query('q', 'Name'), ...paging],
+        responses: responses('200', 'Organisations', '401', '403', '422'),
+      },
+    },
+    '/admin/organisations/{id}': {
+      patch: {
+        ...dashboard('Admin'),
+        summary: 'Suspend or restore an organisation',
+        parameters: [pathId('id', 'Organisation ID')],
+        requestBody: jsonBody(suspendSchema),
+        responses: responses('204', 'Updated', '401', '403', '404', '422'),
+      },
+    },
+    '/admin/audit': {
+      get: {
+        ...dashboard('Admin'),
+        summary: 'Activity history across the platform',
+        parameters: [...paging, query('action', 'Only actions starting with this')],
+        responses: responses('200', 'Newest first', '401', '403', '422'),
       },
     },
     '/campaigns': {
@@ -214,8 +516,9 @@ export const openApiDocument = {
       ingestKey: { type: 'apiKey', in: 'header', name: 'x-ingest-key' },
     },
     responses: {
+      400: { description: 'The link is invalid or has expired' },
       401: { description: 'Sign-in or API key required' },
-      403: { description: 'The guest account is read-only' },
+      403: { description: 'Your role or account does not allow this' },
       404: { description: 'Not found, or belongs to another advertiser' },
       409: { description: 'Not allowed in the current state' },
       422: { description: 'The request failed validation' },

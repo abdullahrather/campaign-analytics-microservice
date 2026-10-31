@@ -5,7 +5,14 @@
  * Provides a dedicated Prisma client instance for test setup/teardown,
  * and helper functions to create test fixtures.
  */
-import { PrismaClient, Role, CampaignStatus, AdSlot, Device } from '@prisma/client';
+import {
+  PrismaClient,
+  Role,
+  OrganisationRole,
+  CampaignStatus,
+  AdSlot,
+  Device,
+} from '@prisma/client';
 import type { Campaign, Prisma } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 
@@ -19,13 +26,27 @@ export async function clearDatabase(): Promise<void> {
   await testPrisma.metric.deleteMany();
   await testPrisma.campaign.deleteMany();
   await testPrisma.show.deleteMany();
+  await testPrisma.organisation.deleteMany();
   await testPrisma.user.deleteMany();
+  await testPrisma.auditLog.deleteMany();
+  await testPrisma.capturedEmail.deleteMany();
 }
 
 /** Creates a test user with a known password and returns the record + plaintext password */
 export async function createTestUser(
-  overrides: Partial<{ email: string; password: string; role: Role }> = {},
-): Promise<{ id: string; email: string; password: string; role: Role }> {
+  overrides: Partial<{
+    email: string;
+    password: string;
+    role: Role;
+    organisationRole: OrganisationRole;
+  }> = {},
+): Promise<{
+  id: string;
+  email: string;
+  password: string;
+  role: Role;
+  organisationId: string;
+}> {
   const password = overrides.password ?? 'Test1234!';
   const passwordHash = await bcrypt.hash(password, 4); // Lower cost for test speed
 
@@ -34,23 +55,40 @@ export async function createTestUser(
       email: overrides.email ?? `test-${Date.now()}@example.com`,
       passwordHash,
       role: overrides.role ?? Role.ADVERTISER,
+      emailVerifiedAt: new Date(),
+      memberships: {
+        create: {
+          role: overrides.organisationRole ?? OrganisationRole.OWNER,
+          organisation: { create: { name: 'Test Organisation' } },
+        },
+      },
     },
+    include: { memberships: true },
   });
 
-  return { id: user.id, email: user.email, password, role: user.role };
+  return {
+    id: user.id,
+    email: user.email,
+    password,
+    role: user.role,
+    organisationId: user.memberships[0]?.organisationId as string,
+  };
 }
 
 export const createTestShow = (title = 'Test Show', genre = 'Drama') =>
   testPrisma.show.create({ data: { title, genre } });
 
-/** A running campaign with sensible defaults. */
-export function createTestCampaign(
+/** A running campaign in the user's organisation, with sensible defaults. */
+export async function createTestCampaign(
   userId: string,
   overrides: Partial<Prisma.CampaignUncheckedCreateInput> = {},
 ): Promise<Campaign> {
+  const membership = await testPrisma.membership.findFirstOrThrow({ where: { userId } });
+
   return testPrisma.campaign.create({
     data: {
       userId,
+      organisationId: membership.organisationId,
       title: 'Test Campaign',
       advertiser: 'Test Advertiser',
       status: CampaignStatus.ACTIVE,

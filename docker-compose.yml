@@ -28,6 +28,8 @@ services:
       DATABASE_URL: postgresql://postgres:secret@db:5432/campaign_analytics?schema=public
       JWT_SECRET: ${JWT_SECRET:-local-demo-secret-that-is-at-least-32-characters}
       INGEST_API_KEY: ${INGEST_API_KEY:-local-demo-ingest-key}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-local-demo-encryption-key-of-32-characters}
+      APP_URL: http://localhost:${PORT:-3000}
     ports:
       - '${PORT:-3000}:3000'
     depends_on:

@@ -1,8 +1,8 @@
 # Campaign Analytics
 
-[![CI](https://github.com/abdullahrather/campaign-analytics-microservice/actions/workflows/ci.yml/badge.svg)](https://github.com/abdullahrather/campaign-analytics-microservice/actions/workflows/ci.yml)
+[![CI](https://github.com/abdullahrather/streaming-ad-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/abdullahrather/streaming-ad-platform/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
-[![Release](https://img.shields.io/github/v/release/abdullahrather/campaign-analytics-microservice)](https://github.com/abdullahrather/campaign-analytics-microservice/releases)
+[![Release](https://img.shields.io/github/v/release/abdullahrather/streaming-ad-platform)](https://github.com/abdullahrather/streaming-ad-platform/releases)
 
 An ad platform for a streaming service. Companies plan campaigns as a team, the platform decides which ad plays in each ad break, every view and click is measured, and a live dashboard shows how each campaign is performing.
 

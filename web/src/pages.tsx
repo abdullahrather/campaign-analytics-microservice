@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useMemo, useState } from 'react';
 import { api, type Campaign, type User } from './api';
 import CampaignForm from './CampaignForm';
 import {
@@ -23,96 +23,7 @@ import {
   formatPercent,
 } from './format';
 import { rangeFor, useLiveData } from './hooks';
-
-const GUEST = { email: 'guest@example.com', password: 'guest-demo' };
-const LOCAL_ACCOUNTS = [
-  { label: 'Advertiser demo', email: 'advertiser@example.com', password: 'advert1234' },
-  { label: 'Admin demo', email: 'admin@example.com', password: 'admin1234' },
-];
-
-export const Login = ({ onLogin }: { onLogin: (user: User) => void }) => {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
-  const [isPublicDemo, setIsPublicDemo] = useState(false);
-
-  useEffect(() => {
-    api
-      .options()
-      .then((options) => setIsPublicDemo(options.demo))
-      .catch(() => setIsPublicDemo(false));
-  }, []);
-
-  const signIn = (address: string, secret: string) => {
-    setError('');
-    api
-      .login(address, secret)
-      .then((session) => onLogin(session.user))
-      .catch((reason: Error) => setError(reason.message));
-  };
-
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    signIn(email, password);
-  };
-
-  return (
-    <main className="login">
-      <form className="card login-card" onSubmit={submit}>
-        <h1>Campaign Analytics</h1>
-        <p className="muted">Plan, run and measure ads across a streaming catalogue.</p>
-        <label>
-          Email
-          <input
-            type="email"
-            autoComplete="username"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-          />
-        </label>
-        <label>
-          Password
-          <input
-            type="password"
-            autoComplete="current-password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-          />
-        </label>
-        {error && (
-          <p className="error" role="alert">
-            {error}
-          </p>
-        )}
-        <button type="submit" className="button primary">
-          Sign in
-        </button>
-        <div className="demo-accounts">
-          <button
-            type="button"
-            className="button"
-            onClick={() => signIn(GUEST.email, GUEST.password)}
-          >
-            Explore as guest
-          </button>
-          {!isPublicDemo &&
-            LOCAL_ACCOUNTS.map((account) => (
-              <button
-                key={account.email}
-                type="button"
-                className="button"
-                onClick={() => signIn(account.email, account.password)}
-              >
-                {account.label}
-              </button>
-            ))}
-        </div>
-      </form>
-    </main>
-  );
-};
+import { ErrorNote } from './ui';
 
 const CampaignTable = ({ campaigns, isAdmin }: { campaigns: Campaign[]; isAdmin: boolean }) => (
   <section className="card">
@@ -169,14 +80,8 @@ const CampaignTable = ({ campaigns, isAdmin }: { campaigns: Campaign[]; isAdmin:
   </section>
 );
 
-const ErrorNote = ({ message }: { message: string }) =>
-  message ? (
-    <p className="error" role="alert">
-      {message}
-    </p>
-  ) : null;
-
-const canEdit = (user: User): boolean => user.role !== 'GUEST';
+const canEdit = (user: User): boolean =>
+  user.role === 'ADMIN' || user.organisationRole === 'OWNER' || user.organisationRole === 'MANAGER';
 
 export const Overview = ({ user, onOpen }: { user: User; onOpen: (id: string) => void }) => {
   const [rangeId, setRangeId] = useState('7d');
@@ -218,7 +123,11 @@ export const Overview = ({ user, onOpen }: { user: User; onOpen: (id: string) =>
           {data.campaigns.length > 0 ? (
             <CampaignTable campaigns={data.campaigns} isAdmin={user.role === 'ADMIN'} />
           ) : (
-            <p className="empty card">No campaigns yet. Create your first one.</p>
+            <p className="empty card">
+              {user.organisationId || user.role === 'GUEST'
+                ? 'No campaigns yet.'
+                : 'You are not in an organisation yet.'}
+            </p>
           )}
         </>
       ) : (

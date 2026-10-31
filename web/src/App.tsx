@@ -1,47 +1,190 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, loadSession, setExpiredHandler, type User } from './api';
+import { AccountPage } from './account';
+import { AdminPage, MailboxPage } from './admin';
+import { api, setExpiredHandler, type User } from './api';
+import {
+  AcceptInvitation,
+  ForgotPassword,
+  Login,
+  Register,
+  ResetPassword,
+  VerifyEmail,
+} from './auth-pages';
+import { ROLE_NAMES } from './format';
 import { useTheme } from './hooks';
-import { CampaignPage, Login, Overview } from './pages';
+import { CampaignPage, Overview } from './pages';
+import { ActivityPage, TeamPage } from './team';
 
-const ROLE_LABELS: Record<string, string> = {
-  ADMIN: 'Admin',
-  ADVERTISER: 'Advertiser',
-  GUEST: 'Guest',
+interface Route {
+  path: string;
+  token: string;
+}
+
+const readRoute = (): Route => {
+  const [path = '/', query = ''] = window.location.hash.slice(1).split('?');
+  return { path: path || '/', token: new URLSearchParams(query).get('token') ?? '' };
 };
 
-const readRoute = (): string | null =>
-  window.location.hash.match(/^#\/campaigns\/(.+)$/)?.[1] ?? null;
+const go = (path: string): void => {
+  window.location.hash = `#${path}`;
+};
+
+const roleLabel = (user: User): string => {
+  if (user.role === 'ADMIN') return 'Platform admin';
+  if (user.role === 'GUEST') return 'Guest';
+  return user.organisationRole ? ROLE_NAMES[user.organisationRole] : 'No organisation';
+};
 
 const App = () => {
-  const [user, setUser] = useState<User | null>(() => loadSession()?.user ?? null);
-  const [campaignId, setCampaignId] = useState(readRoute);
+  const [user, setUser] = useState<User | null>(null);
+  const [restoring, setRestoring] = useState(true);
+  const [route, setRoute] = useState(readRoute);
+  const [notice, setNotice] = useState('');
   const { theme, toggle } = useTheme();
 
   useEffect(() => {
-    const onChange = () => setCampaignId(readRoute());
+    const onChange = () => setRoute(readRoute());
     window.addEventListener('hashchange', onChange);
     return () => window.removeEventListener('hashchange', onChange);
   }, []);
 
-  const signOut = useCallback(() => {
-    api.logout();
-    setUser(null);
+  useEffect(() => {
+    api
+      .restore()
+      .then(setUser)
+      .catch(() => setUser(null))
+      .finally(() => setRestoring(false));
   }, []);
 
-  useEffect(() => setExpiredHandler(signOut), [signOut]);
+  const reloadUser = useCallback(() => {
+    api
+      .me()
+      .then(setUser)
+      .catch(() => setUser(null));
+  }, []);
 
-  if (!user) return <Login onLogin={setUser} />;
+  const signOut = useCallback(() => {
+    void api.logout().then(() => {
+      setUser(null);
+      go('/');
+    });
+  }, []);
+
+  useEffect(() => {
+    setExpiredHandler(() => {
+      setNotice('You were signed out. Please sign in again.');
+      setUser(null);
+    });
+  }, []);
+
+  if (restoring) return null;
+
+  if (route.path === '/mailbox') return <MailboxPage />;
+  if (route.path === '/verify-email') return <VerifyEmail token={route.token} />;
+  if (route.path === '/reset-password') return <ResetPassword token={route.token} />;
+  if (route.path === '/invitation') {
+    return (
+      <AcceptInvitation
+        token={route.token}
+        user={user}
+        onJoined={() => {
+          setNotice('You joined the organisation. Sign in to continue.');
+          if (user) reloadUser();
+          go('/');
+        }}
+      />
+    );
+  }
+
+  if (!user) {
+    if (route.path === '/register') return <Register />;
+    if (route.path === '/forgot-password') return <ForgotPassword />;
+    return (
+      <Login
+        notice={notice}
+        onLogin={(signedIn) => {
+          setNotice('');
+          setUser(signedIn);
+        }}
+      />
+    );
+  }
+
+  const isGuest = user.role === 'GUEST';
+  const hasOrganisation = user.organisationId !== null;
+  const seesActivity = user.organisationRole === 'OWNER' || user.organisationRole === 'MANAGER';
+  const campaignId = route.path.match(/^\/campaigns\/(.+)$/)?.[1];
+
+  const page = (() => {
+    if (campaignId) {
+      return <CampaignPage key={campaignId} id={campaignId} user={user} onBack={() => go('/')} />;
+    }
+    if (route.path === '/team' && hasOrganisation && !isGuest) {
+      return <TeamPage key={user.organisationId} user={user} onChanged={reloadUser} />;
+    }
+    if (route.path === '/activity' && seesActivity) {
+      return <ActivityPage key={user.organisationId} />;
+    }
+    if (route.path === '/account' && !isGuest) {
+      return <AccountPage user={user} onChanged={reloadUser} />;
+    }
+    if (route.path === '/admin' && user.role === 'ADMIN') return <AdminPage user={user} />;
+    return (
+      <Overview key={user.organisationId} user={user} onOpen={(id) => go(`/campaigns/${id}`)} />
+    );
+  })();
+
+  const links = [
+    { path: '/', label: 'Overview', show: true },
+    { path: '/team', label: 'Team', show: hasOrganisation && !isGuest },
+    { path: '/activity', label: 'Activity', show: seesActivity },
+    { path: '/account', label: 'Account', show: !isGuest },
+    { path: '/admin', label: 'Admin', show: user.role === 'ADMIN' },
+  ].filter((link) => link.show);
+
+  const isCurrent = (path: string): boolean =>
+    path === '/' ? route.path === '/' || Boolean(campaignId) : route.path === path;
 
   return (
     <>
       <nav className="topbar" aria-label="Main">
-        <a href="#/" className="brand">
-          Campaign Analytics
-        </a>
+        <div className="topbar-group">
+          <a href="#/" className="brand">
+            Campaign Analytics
+          </a>
+          {links.map((link) => (
+            <a
+              key={link.path}
+              href={`#${link.path}`}
+              className="nav-link"
+              aria-current={isCurrent(link.path) ? 'page' : undefined}
+            >
+              {link.label}
+            </a>
+          ))}
+        </div>
         <div className="topbar-actions">
-          <span className="muted small who">
-            {user.email} · {ROLE_LABELS[user.role] ?? user.role}
-          </span>
+          {user.organisations.length > 1 ? (
+            <select
+              aria-label="Organisation"
+              value={user.organisationId ?? ''}
+              onChange={(event) => {
+                void api.switchOrganisation(event.target.value).then(() => {
+                  go('/');
+                  reloadUser();
+                });
+              }}
+            >
+              {user.organisations.map((organisation) => (
+                <option key={organisation.id} value={organisation.id}>
+                  {organisation.name}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <span className="muted small who">{user.organisations[0]?.name}</span>
+          )}
+          <span className="muted small who">{roleLabel(user)}</span>
           <a className="button" href="/docs">
             API docs
           </a>
@@ -54,26 +197,10 @@ const App = () => {
         </div>
       </nav>
       <main className="page">
-        {user.role === 'GUEST' && (
+        {isGuest && (
           <p className="notice">Read-only demo. All brands, shows and traffic are fictional.</p>
         )}
-        {campaignId ? (
-          <CampaignPage
-            key={campaignId}
-            id={campaignId}
-            user={user}
-            onBack={() => {
-              window.location.hash = '#/';
-            }}
-          />
-        ) : (
-          <Overview
-            user={user}
-            onOpen={(id) => {
-              window.location.hash = `#/campaigns/${id}`;
-            }}
-          />
-        )}
+        {page}
       </main>
     </>
   );

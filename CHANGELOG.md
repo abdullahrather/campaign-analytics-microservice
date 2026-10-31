@@ -6,6 +6,21 @@ The main changes in each version. Every release's full notes are on the [Release
 
 ### Added
 
+- Sign-up, email confirmation and password reset
+- Organisations with invitations and owner, manager and analyst roles
+- Rotating sessions, a device list and sign-out from all devices
+- Two-factor login with an authenticator app and recovery codes
+- An activity log, an admin console and a local mailbox for email
+
+### Changed
+
+- Campaigns belong to organisations instead of individual users
+- Access tokens last 15 minutes, and refresh tokens use an httpOnly cookie
+
+## 1.1.0
+
+### Added
+
 - Interactive API docs at `/docs`, generated from the validation schemas
 - Read-only guest login and a public demo mode
 - Demo traffic that runs inside the app, and only while someone is viewing it in demo mode

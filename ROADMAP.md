@@ -4,6 +4,8 @@ The goal is to grow this from a working demo into a complete ad platform for str
 
 Each phase ends with something you can use and show. Phases are built in order, and each one ships as its own pull requests.
 
+The platform is built to run and be demonstrated on one computer. Every feature has to work locally without hosting or paid services. Services that cost money, such as AI providers, are optional and use the owner's own account.
+
 ## Done
 
 - [x] Campaigns with budgets, CPM, dates, goals and targeting
@@ -20,9 +22,9 @@ Make the project easy to find, understand and try.
 - [x] Publish interactive API docs from an OpenAPI spec
 - [x] Add a license, contribution guide and changelog
 - [x] Add automatic version tags and releases
-- [ ] Deploy a public demo with a read-only guest login and clearly marked fictional data
+- [x] Add a read-only guest login with clearly marked fictional data
 
-**Done when:** a stranger can open a link and explore the product in under a minute.
+**Done when:** a visitor can understand the project from the README and run it with two commands.
 
 ## Phase 2: Accounts and teams
 
@@ -42,7 +44,7 @@ Replace demo logins with real multi-user accounts.
 Move from simulated numbers to ads actually playing.
 
 - [ ] Upload ad creatives, with size and format checks
-- [ ] Transcode video and store it behind a CDN
+- [ ] Transcode video and store it locally, behind a storage layer that could use the cloud later
 - [ ] Review queue so an admin approves creatives before they run
 - [ ] Demo streaming site with a video player and pre-, mid- and post-roll ads
 - [ ] Player SDK that reports impressions, quartiles, clicks and completions
@@ -95,8 +97,11 @@ Answer business questions, not just show totals.
 
 ## Phase 7: AI assistant
 
-Use Claude to turn data into decisions.
+Use AI to turn data into decisions. This is optional: the platform works fully without it, and turns it on when the owner adds their own API key.
 
+- [ ] Provider settings in `.env`, with Claude as the default and support for other providers
+- [ ] Clear disabled state in the dashboard when no key is set
+- [ ] Read-only data access limited to what the signed-in user can already see
 - [ ] Ask questions in plain language and get answers from your campaign data
 - [ ] Automatic weekly summary of what changed and why
 - [ ] Recommendations for budget, targeting and pacing, always approved by a person
@@ -124,10 +129,13 @@ Bring everything up to the standard of a live service.
 
 - [ ] Structured logs, metrics and tracing (OpenTelemetry and Grafana)
 - [ ] Database backups with tested restores
-- [ ] Staging environment and zero-downtime deployments
-- [ ] Kubernetes or managed container deployment
+- [ ] One-command Docker stack for the full platform and its monitoring
 - [ ] GDPR tools: viewer consent, data export, deletion and retention limits
 - [ ] End-to-end browser tests and security scanning in CI
 - [ ] Dashboard in English and German
 
 **Done when:** the platform can be restored from backup, and a failure raises an alert before a customer notices.
+
+## Optional: public hosting
+
+Not needed for the project, and only worth doing if a live link becomes useful. `render.yaml` and `Dockerfile.demo` are ready for a free read-only demo. Hosting the full platform would be a paid setup.

@@ -6,21 +6,27 @@
  */
 import { Request, Response, NextFunction } from 'express';
 import { AppError } from '@/middleware/errorHandler';
-import { createCampaignSchema, listCampaignsQuerySchema } from './campaigns.schema';
-import { campaignsService } from './campaigns.service';
+import {
+  createCampaignSchema,
+  dateRangeSchema,
+  listCampaignsQuerySchema,
+  updateCampaignSchema,
+} from './campaigns.schema';
+import { campaignsService, type Actor } from './campaigns.service';
+
+const actorOf = (req: Request): Actor => {
+  if (!req.user) throw new AppError(401, 'Unauthenticated.');
+  return req.user;
+};
+
+const idOf = (req: Request): string => req.params['id'] as string;
 
 export class CampaignsController {
-  /**
-   * GET /campaigns
-   *
-   * List campaigns for the authenticated user, with pagination and filtering.
-   */
+  /** GET /campaigns */
   async list(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      if (!req.user) throw new AppError(401, 'Unauthenticated.');
-
       const query = listCampaignsQuerySchema.parse(req.query);
-      const result = await campaignsService.listCampaigns(req.user.sub, query);
+      const result = await campaignsService.listCampaigns(actorOf(req), query);
 
       res.status(200).json({ status: 'success', ...result });
     } catch (error) {
@@ -28,17 +34,11 @@ export class CampaignsController {
     }
   }
 
-  /**
-   * POST /campaigns
-   *
-   * Create a new campaign for the authenticated user.
-   */
+  /** POST /campaigns */
   async create(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      if (!req.user) throw new AppError(401, 'Unauthenticated.');
-
       const dto = createCampaignSchema.parse(req.body);
-      const campaign = await campaignsService.createCampaign(req.user.sub, dto);
+      const campaign = await campaignsService.createCampaign(actorOf(req), dto);
 
       res.status(201).json({ status: 'success', data: campaign });
     } catch (error) {
@@ -46,19 +46,78 @@ export class CampaignsController {
     }
   }
 
-  /**
-   * GET /campaigns/analytics
-   *
-   * Returns aggregated views + clicks per campaign in a SINGLE DB query.
-   * No N+1 queries — see CampaignsService.getAnalytics() for the SQL details.
-   */
+  /** GET /campaigns/:id */
+  async get(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const campaign = await campaignsService.findOneOrFail(idOf(req), actorOf(req));
+
+      res.status(200).json({ status: 'success', data: campaign });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /** PATCH /campaigns/:id */
+  async update(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const dto = updateCampaignSchema.parse(req.body);
+      const campaign = await campaignsService.updateCampaign(idOf(req), actorOf(req), dto);
+
+      res.status(200).json({ status: 'success', data: campaign });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /** DELETE /campaigns/:id */
+  async remove(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      await campaignsService.deleteCampaign(idOf(req), actorOf(req));
+
+      res.status(204).end();
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /** GET /campaigns/analytics */
   async analytics(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      if (!req.user) throw new AppError(401, 'Unauthenticated.');
-
-      const data = await campaignsService.getAnalytics(req.user.sub);
+      const range = dateRangeSchema.parse(req.query);
+      const data = await campaignsService.getAnalytics(actorOf(req), range);
 
       res.status(200).json({ status: 'success', data });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /** GET /campaigns/analytics/timeseries */
+  async timeseries(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const range = dateRangeSchema.parse(req.query);
+      const data = await campaignsService.getTimeseries(actorOf(req), range);
+
+      res.status(200).json({ status: 'success', data });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /** GET /campaigns/:id/analytics */
+  async campaignAnalytics(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const actor = actorOf(req);
+      const id = idOf(req);
+      const range = dateRangeSchema.parse(req.query);
+
+      const breakdown = await campaignsService.getBreakdown(id, actor, range);
+      const [[campaign], timeseries] = await Promise.all([
+        campaignsService.getAnalytics(actor, range, id),
+        campaignsService.getTimeseries(actor, range, id),
+      ]);
+
+      res.status(200).json({ status: 'success', data: { campaign, timeseries, breakdown } });
     } catch (error) {
       next(error);
     }

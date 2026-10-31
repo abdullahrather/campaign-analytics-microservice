@@ -27,3 +27,9 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# Local PostgreSQL data
+.data/
+
+# Dashboard build
+web/dist/

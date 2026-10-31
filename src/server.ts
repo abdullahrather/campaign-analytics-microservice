@@ -8,11 +8,11 @@
  *  b) The server startup concerns (port binding, graceful shutdown)
  *     are isolated in one place.
  */
-import { createApp } from './app';
+import { createServerApp } from './app';
 import { env } from '@/config/env';
 import { prisma } from '@/lib/prisma';
 
-const app = createApp();
+const app = createServerApp();
 
 const server = app.listen(env.PORT, () => {
   console.info(`🚀  Server running at http://localhost:${env.PORT}`);
@@ -24,14 +24,15 @@ const server = app.listen(env.PORT, () => {
 // Ensures in-flight requests complete and the DB connection is cleanly closed
 // before the process exits. Essential for zero-downtime deployments.
 
-const shutdown = async (signal: string): Promise<void> => {
+const shutdown = (signal: string): void => {
   console.info(`\n📴  ${signal} received. Shutting down gracefully...`);
 
-  server.close(async () => {
+  server.close(() => {
     console.info('🔌  HTTP server closed.');
-    await prisma.$disconnect();
-    console.info('🗄️   Database connection closed.');
-    process.exit(0);
+    void prisma.$disconnect().finally(() => {
+      console.info('🗄️   Database connection closed.');
+      process.exit(0);
+    });
   });
 
   // Force exit if graceful shutdown takes too long
@@ -41,5 +42,5 @@ const shutdown = async (signal: string): Promise<void> => {
   }, 10_000);
 };
 
-process.on('SIGTERM', () => void shutdown('SIGTERM'));
-process.on('SIGINT',  () => void shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));

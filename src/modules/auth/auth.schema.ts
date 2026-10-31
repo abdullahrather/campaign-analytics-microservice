@@ -8,14 +8,14 @@ import { z } from 'zod';
 
 export const loginSchema = z.object({
   email: z
-    .string({ required_error: 'Email is required.' })
-    .email({ message: 'Must be a valid email address.' })
+    .string({ error: 'Email is required.' })
+    .trim()
     .toLowerCase()
-    .trim(),
+    .pipe(z.email({ error: 'Must be a valid email address.' })),
 
   password: z
-    .string({ required_error: 'Password is required.' })
-    .min(8, { message: 'Password must be at least 8 characters.' }),
+    .string({ error: 'Password is required.' })
+    .min(8, { error: 'Password must be at least 8 characters.' }),
 });
 
 export type LoginDto = z.infer<typeof loginSchema>;

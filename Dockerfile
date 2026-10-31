@@ -1,55 +1,29 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# Stage 1: Dependencies installer (shared base)
+# Stage 1: Builder — compiles the API and the dashboard. Also used by
+# docker-compose, because it keeps the tools needed to seed demo data.
 # ─────────────────────────────────────────────────────────────────────────────
-FROM node:20-alpine AS deps
+FROM node:24-alpine AS builder
 
 WORKDIR /app
 
-# Install OS-level dependencies needed for native modules (bcrypt, etc.)
 RUN apk add --no-cache openssl
 
 COPY package*.json ./
+COPY web/package*.json ./web/
 COPY prisma ./prisma/
 
-RUN npm ci --frozen-lockfile
+RUN npm ci && npm ci --prefix web && npx prisma generate
 
-# Generate Prisma client
-RUN npx prisma generate
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Stage 2: Development (hot-reload via ts-node-dev)
-# ─────────────────────────────────────────────────────────────────────────────
-FROM node:20-alpine AS development
-
-WORKDIR /app
-
-RUN apk add --no-cache openssl
-
-COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+
+RUN npm run build && npm run build --prefix web
 
 EXPOSE 3000
 
-CMD ["npm", "run", "dev"]
-
 # ─────────────────────────────────────────────────────────────────────────────
-# Stage 3: Builder — compile TypeScript
+# Stage 2: Production — lean image without dev dependencies
 # ─────────────────────────────────────────────────────────────────────────────
-FROM node:20-alpine AS builder
-
-WORKDIR /app
-
-RUN apk add --no-cache openssl
-
-COPY --from=deps /app/node_modules ./node_modules
-COPY . .
-
-RUN npm run build
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Stage 4: Production runner — lean image, no dev deps
-# ─────────────────────────────────────────────────────────────────────────────
-FROM node:20-alpine AS production
+FROM node:24-alpine AS production
 
 WORKDIR /app
 
@@ -57,17 +31,16 @@ RUN apk add --no-cache openssl
 
 ENV NODE_ENV=production
 
-# Only copy production dependencies
 COPY package*.json ./
 COPY prisma ./prisma/
 
-RUN npm ci --frozen-lockfile --only=production && npx prisma generate
+RUN npm ci --omit=dev && npx prisma generate
 
-# Copy compiled output
 COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/web/dist ./web/dist
 
 EXPOSE 3000
 
 USER node
 
-CMD ["node", "dist/server.js"]
+CMD ["sh", "-c", "npx prisma migrate deploy && node dist/server.js"]

@@ -1,0 +1,10 @@
+.data
+.env
+.git
+.github
+coverage
+dist
+node_modules
+web/dist
+web/node_modules
+*.log

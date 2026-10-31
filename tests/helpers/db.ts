@@ -5,24 +5,20 @@
  * Provides a dedicated Prisma client instance for test setup/teardown,
  * and helper functions to create test fixtures.
  */
-import { PrismaClient, Role, CampaignStatus } from '@prisma/client';
+import { PrismaClient, Role, CampaignStatus, AdSlot, Device } from '@prisma/client';
+import type { Campaign, Prisma } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 
 // Create a separate client for tests — avoids interfering with the app's singleton
 export const testPrisma = new PrismaClient({
-  datasources: {
-    db: {
-      url:
-        process.env['TEST_DATABASE_URL'] ??
-        'postgresql://postgres:secret@localhost:5432/campaign_analytics_test?schema=public',
-    },
-  },
+  datasources: { db: { url: process.env['TEST_DATABASE_URL'] as string } },
 });
 
-/** Wipes all data in dependency order (metrics → campaigns → users) */
+/** Wipes all data in dependency order */
 export async function clearDatabase(): Promise<void> {
   await testPrisma.metric.deleteMany();
   await testPrisma.campaign.deleteMany();
+  await testPrisma.show.deleteMany();
   await testPrisma.user.deleteMany();
 }
 
@@ -31,7 +27,7 @@ export async function createTestUser(
   overrides: Partial<{ email: string; password: string; role: Role }> = {},
 ): Promise<{ id: string; email: string; password: string; role: Role }> {
   const password = overrides.password ?? 'Test1234!';
-  const passwordHash = await bcrypt.hash(password, 10); // Lower cost for test speed
+  const passwordHash = await bcrypt.hash(password, 4); // Lower cost for test speed
 
   const user = await testPrisma.user.create({
     data: {
@@ -44,26 +40,49 @@ export async function createTestUser(
   return { id: user.id, email: user.email, password, role: user.role };
 }
 
-/** Creates a campaign and optional metric rows for a given user */
-export async function createTestCampaignWithMetrics(
+export const createTestShow = (title = 'Test Show', genre = 'Drama') =>
+  testPrisma.show.create({ data: { title, genre } });
+
+/** A running campaign with sensible defaults. */
+export function createTestCampaign(
   userId: string,
-  title: string,
-  status: CampaignStatus,
-  metrics: Array<{ views: number; clicks: number }>,
-): Promise<{ campaignId: string }> {
-  const campaign = await testPrisma.campaign.create({
-    data: { userId, title, status },
+  overrides: Partial<Prisma.CampaignUncheckedCreateInput> = {},
+): Promise<Campaign> {
+  return testPrisma.campaign.create({
+    data: {
+      userId,
+      title: 'Test Campaign',
+      advertiser: 'Test Advertiser',
+      status: CampaignStatus.ACTIVE,
+      budgetCents: 1_000_000,
+      cpmCents: 2000,
+      impressionGoal: 1_000_000,
+      startsAt: new Date(Date.now() - 86_400_000),
+      endsAt: new Date(Date.now() + 86_400_000),
+      ...overrides,
+    },
   });
+}
 
-  if (metrics.length > 0) {
-    await testPrisma.metric.createMany({
-      data: metrics.map((m) => ({
-        campaignId: campaign.id,
-        views: m.views,
-        clicks: m.clicks,
-      })),
-    });
-  }
+/** Adds metric rows, one hour apart, ending in the most recent full hour. */
+export async function addMetrics(
+  campaignId: string,
+  showId: string,
+  metrics: Array<{ impressions: number; clicks: number; completions?: number; country?: string }>,
+): Promise<void> {
+  const currentHour = Math.floor(Date.now() / 3_600_000) * 3_600_000;
 
-  return { campaignId: campaign.id };
+  await testPrisma.metric.createMany({
+    data: metrics.map((metric, index) => ({
+      campaignId,
+      showId,
+      slot: AdSlot.MID_ROLL,
+      country: metric.country ?? 'DE',
+      device: Device.CTV,
+      bucket: new Date(currentHour - (index + 1) * 3_600_000),
+      impressions: metric.impressions,
+      clicks: metric.clicks,
+      completions: metric.completions ?? 0,
+    })),
+  });
 }

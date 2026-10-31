@@ -15,7 +15,7 @@ import { env } from '@/config/env';
 
 const createPrismaClient = (): PrismaClient => {
   return new PrismaClient({
-    log: env.NODE_ENV === 'development' ? ['query', 'warn', 'error'] : ['warn', 'error'],
+    log: ['warn', 'error'],
   });
 };
 

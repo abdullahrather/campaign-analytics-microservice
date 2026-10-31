@@ -1,6 +1,5 @@
-import type { Config } from 'jest';
-
-const config: Config = {
+/** @type {import('jest').Config} */
+module.exports = {
   // Use ts-jest to transform TypeScript files without a separate build step
   preset: 'ts-jest',
 
@@ -30,6 +29,9 @@ const config: Config = {
 
   coverageDirectory: 'coverage',
 
+  // Runs before each test file's imports, so the app config sees the test database
+  setupFiles: ['./tests/setup/env.ts'],
+
   // Global setup: runs once before the entire test suite
   // Used to apply DB migrations on the test database
   globalSetup: './tests/setup/globalSetup.ts',
@@ -46,6 +48,7 @@ const config: Config = {
       'ts-jest',
       {
         tsconfig: {
+          rootDir: '.',
           // Relax some strict checks that are counterproductive in test files
           noUnusedLocals: false,
           noUnusedParameters: false,
@@ -57,5 +60,3 @@ const config: Config = {
     ],
   },
 };
-
-export default config;

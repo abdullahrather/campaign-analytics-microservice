@@ -1,167 +1,135 @@
-# 🚀 Media Campaign Analytics Microservice
+# Campaign Analytics
 
-> A production-ready REST API microservice for managing and analysing advertising campaigns. Built with Node.js, TypeScript (strict mode), Express, Prisma, and PostgreSQL.
+An ad platform for a streaming service. Advertisers plan campaigns, the platform decides which ad plays in each ad break, every view and click is measured, and a live dashboard shows how each campaign is performing.
 
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue.svg)](https://www.typescriptlang.org/)
-[![Node.js](https://img.shields.io/badge/Node.js-20.x-green.svg)](https://nodejs.org/)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-blue.svg)](https://www.postgresql.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+Built with Node.js, TypeScript, Express, Prisma and PostgreSQL, with a React dashboard. All brands, shows and traffic in the demo are fictional.
 
----
+## Run it
 
-## Architecture Overview
-
-```
-src/
-├── config/         # Environment validation (Zod)
-├── lib/            # Shared infrastructure (Prisma singleton)
-├── middleware/     # JWT auth guard, global error handler
-├── modules/
-│   ├── auth/       # Login → JWT
-│   └── campaigns/  # CRUD + Analytics
-├── types/          # Express.Request augmentation
-├── app.ts          # Express factory (testable — no listen())
-└── server.ts       # Entry point + graceful shutdown
-```
-
-## Quick Start (Docker)
+You need Node.js 22 or newer. Nothing else: no Docker and no database install.
 
 ```bash
-# 1. Clone & configure environment
-cp .env.example .env
-# Edit .env and set a strong JWT_SECRET
-
-# 2. Spin up Postgres + API with hot reload
-docker-compose up
-
-# 3. Seed demo data
-docker-compose exec api npm run db:seed
-```
-
-The API will be available at **http://localhost:3000**
-
-## Quick Start (Local Development)
-
-```bash
-# Prerequisites: Node 20+, PostgreSQL 16 running locally
-
 npm install
-npx prisma migrate dev --name init
-npm run db:seed
 npm run dev
 ```
 
-## API Reference
+Open **http://localhost:5173** and choose **Advertiser demo**. Press `Ctrl+C` to stop.
 
-### Health Check
+The first run creates a local PostgreSQL in `.data/`, sets up the tables, and adds 30 days of demo data. Your data stays between runs. To start fresh, stop the app and delete `.data/`.
+
+| Account | Email | Password | Sees |
+|---|---|---|---|
+| Advertiser | `advertiser@example.com` | `advert1234` | Their own campaigns |
+| Admin | `admin@example.com` | `admin1234` | Every campaign and its owner |
+
+## What it does
+
+Streaming services with an ad tier show short ads before, during and after episodes. Three parties meet here:
+
+- **The advertiser** wants their ad seen by the right people for a set budget.
+- **The platform** has to choose an ad for every ad break and keep each campaign on schedule.
+- **The viewer** watches, and the player reports what happened.
+
+This app is the part in the middle:
+
 ```
-GET /health
-```
-
-### Authentication
-```
-POST /auth/login
-Content-Type: application/json
-
-{ "email": "advertiser@example.com", "password": "advert1234" }
-```
-Returns: `{ "data": { "token": "<jwt>", "expiresIn": "1h" } }`
-
-### Campaigns (all require Authorization: Bearer <token>)
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/campaigns` | List user's campaigns (paginated) |
-| `POST` | `/campaigns` | Create a new campaign |
-| `GET` | `/campaigns/analytics` | Aggregated views + clicks per campaign |
-
-#### List Campaigns — Query Params
-| Param | Type | Description |
-|-------|------|-------------|
-| `status` | `ACTIVE` \| `PAUSED` | Filter by status |
-| `page` | `number` | Page number (default: 1) |
-| `limit` | `number` | Items per page (default: 20, max: 100) |
-
-#### Analytics Response Shape
-```json
-{
-  "status": "success",
-  "data": [
-    {
-      "id": "cuid...",
-      "title": "Summer Sale 2024",
-      "status": "ACTIVE",
-      "createdAt": "2024-01-15T10:00:00.000Z",
-      "totalViews": 5300,
-      "totalClicks": 285
-    }
-  ]
-}
+ Advertiser ──── dashboard ───▶ Campaigns: budget, dates, targeting
+                                    │
+ Player: "ad break in this show" ──▶ GET /ad-decision ── picks the best campaign
+                                    │
+ Player: "it played, was clicked" ─▶ POST /events ────── adds up hourly totals
+                                    │
+ Advertiser ◀─── live charts ────── Analytics
 ```
 
-## The N+1 Solution
+`npm run dev` also starts a simulator that plays the part of the viewers, so the numbers move while you watch. Run with `SIMULATE=0` to turn it off.
 
-The analytics endpoint uses a **single SQL query** with a `LEFT JOIN` and `GROUP BY`, avoiding the classic N+1 problem:
+**Things to try:** create a campaign targeting one country and watch it start delivering within seconds. Pause it and see the numbers stop. Compare Connected TV with Mobile on a campaign's page.
 
-```sql
-SELECT
-  c.id,
-  c.title,
-  c.status,
-  c.created_at,
-  COALESCE(SUM(m.views),  0) AS "totalViews",
-  COALESCE(SUM(m.clicks), 0) AS "totalClicks"
-FROM campaigns c
-LEFT JOIN metrics m ON m.campaign_id = c.id
-WHERE c.user_id = $1
-GROUP BY c.id, c.title, c.status, c.created_at
-ORDER BY c.created_at DESC;
+### The terms on the dashboard
+
+| Term | Meaning |
+|---|---|
+| **Impression** | One ad played once to one viewer. |
+| **Click-through rate (CTR)** | The share of impressions that were clicked. TV is low because viewers rarely can. |
+| **Ads watched to the end** | The share of ads that played to completion. Mid-roll is highest: viewers want the show back. |
+| **CPM** | The price per 1,000 impressions. |
+| **Ad slot** | Pre-roll (before the episode), mid-roll (during) or post-roll (after). |
+| **Flight** | The dates a campaign runs. |
+| **Impression goal** | The number of impressions the advertiser bought. |
+| **Pacing** | Delivery so far compared with an even schedule. Behind means the campaign may miss its goal. |
+
+### How an ad gets chosen
+
+For each ad break, `/ad-decision` keeps campaigns that are active, inside their dates, under their goal and budget, and matching the country, device, slot and show genre. It then picks the one furthest behind schedule, with the higher CPM winning ties. A campaign is marked completed when it reaches its goal or budget, or passes its end date.
+
+## How it stays fast
+
+- **Hourly rollups.** Events are added into one row per campaign, hour, show, slot, country and device, not stored one by one. The table grows with variety, not with traffic.
+- **Batched writes.** A batch of up to 1,000 events becomes a single upsert.
+- **One query per view.** Analytics run as a single SQL statement, so more campaigns never means more database round trips.
+
+## API
+
+Dashboard routes need `Authorization: Bearer <token>` from login. Ad server routes need an `x-ingest-key` header.
+
+| Method | Route | Purpose |
+|---|---|---|
+| `GET` | `/health` | Service and database status |
+| `POST` | `/auth/login` | Sign in; limited to 20 attempts per 15 minutes |
+| `GET` | `/campaigns` | List campaigns, with `status`, `page` and `limit` |
+| `POST` | `/campaigns` | Create a campaign |
+| `GET` | `/campaigns/:id` | Read a campaign |
+| `PATCH` | `/campaigns/:id` | Change a campaign, including pausing and resuming |
+| `DELETE` | `/campaigns/:id` | Delete a campaign and its metrics |
+| `GET` | `/campaigns/analytics` | Totals, pacing and spend per campaign, with `from` and `to` |
+| `GET` | `/campaigns/analytics/timeseries` | Performance over time across campaigns |
+| `GET` | `/campaigns/:id/analytics` | One campaign with its trend and breakdowns |
+| `GET` | `/shows` | The show catalogue |
+| `GET` | `/ad-decision` | Choose an ad: `showId`, `slot`, `country`, `device` |
+| `POST` | `/events` | Record `IMPRESSION`, `CLICK` and `COMPLETION` events |
+
+## Project layout
+
+```
+prisma/          Database schema, migrations and demo data
+scripts/         Local database, dev startup and traffic simulator
+src/modules/     auth, campaigns, delivery (ad decisions and events), shows
+src/middleware/  Login guard, API key guard, error handling
+tests/           Integration tests against a real PostgreSQL
+web/             The React dashboard
 ```
 
-`LEFT JOIN` ensures campaigns with zero metrics still appear. `COALESCE` converts `NULL` → `0`.
+## Scripts
 
-## Running Tests
+| Script | Purpose |
+|---|---|
+| `npm run dev` | Start everything |
+| `npm test` | Run the integration tests |
+| `npm run test:coverage` | Tests with a coverage report |
+| `npm run lint` | Lint the API |
+| `npm run format` | Format the code |
+| `npm run typecheck` | Check TypeScript types |
+| `npm run build` | Compile the API |
+| `npm run db:seed` | Replace all data with fresh demo data |
+| `npm run db:studio` | Browse the database in Prisma Studio |
+
+## Docker
+
+With Docker installed, this runs the database and the app at **http://localhost:3000**:
 
 ```bash
-# Ensure the test DB is available (Docker or local Postgres)
-# Set TEST_DATABASE_URL in .env
-
-npm test
-
-# With coverage report
-npm run test:coverage
+docker compose up --build
 ```
 
-## Database Schema
+For a real deployment, build the `production` image target and set `DATABASE_URL`, `JWT_SECRET` and `INGEST_API_KEY`. The app refuses to start in production with the placeholder secrets.
 
-```
-User ──┐
-       ├── Campaign ──┐
-                      └── Metric
-```
+## Known limits
 
-- **User**: `id (cuid)`, `email (unique)`, `password_hash`, `role (ADMIN|ADVERTISER)`
-- **Campaign**: `id`, `user_id (FK)`, `title`, `status (ACTIVE|PAUSED)`, `created_at`
-- **Metric**: `id`, `campaign_id (FK)`, `views`, `clicks`, `recorded_at`
+This is a working demonstration, not a system that has run under real load. [ROADMAP.md](./ROADMAP.md) shows where it's heading.
 
-## Available Scripts
-
-| Script | Description |
-|--------|-------------|
-| `npm run dev` | Start with hot reload (ts-node-dev) |
-| `npm run build` | Compile TypeScript |
-| `npm start` | Run compiled production build |
-| `npm test` | Run integration tests |
-| `npm run test:coverage` | Tests with coverage report |
-| `npm run db:migrate` | Apply pending migrations |
-| `npm run db:seed` | Seed demo data |
-| `npm run db:studio` | Open Prisma Studio |
-| `npm run lint` | Run ESLint |
-| `npm run format` | Run Prettier |
-
-## Demo Credentials (after seeding)
-
-| Role | Email | Password |
-|------|-------|----------|
-| Admin | `admin@example.com` | `admin1234` |
-| Advertiser | `advertiser@example.com` | `advert1234` |
+- Sending the same event batch twice counts it twice, because events have no IDs.
+- Budgets and goals are checked as events arrive, so a campaign can slightly overshoot under heavy traffic.
+- Each ad decision adds up the campaign's delivery. Real ad traffic would need a cache in front of this.
+- `/ad-decision` and `/events` share one API key, which suits a trusted ad server, not code running on viewers' devices.
+- Advertisers can't sign up in the app; accounts come from the seed data.

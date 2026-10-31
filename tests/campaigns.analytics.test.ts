@@ -1,270 +1,245 @@
 /**
  * tests/campaigns.analytics.test.ts
  *
- * Integration test suite for the Analytics endpoint.
- *
- * Strategy:
- *  - Uses a real PostgreSQL test database (not mocks) for authentic coverage.
- *  - Each test group runs against a clean database slice (clearDatabase in beforeEach).
- *  - Supertest binds the app to an ephemeral port — no port conflicts.
- *  - Tests are ordered to cover: happy path, edge cases, and authentication.
- *
- * The key assertion: aggregated totals MUST match the exact values inserted,
- * proving the SQL query is correct and no N+1 loops are silently accumulating.
+ * Integration tests against a real PostgreSQL test database (not mocks).
+ * Each test starts from an empty database; Supertest binds an ephemeral port.
  */
 import request from 'supertest';
-import { CampaignStatus } from '@prisma/client';
+import bcrypt from 'bcryptjs';
+import { CampaignStatus, Role } from '@prisma/client';
 import { createApp } from '@/app';
 import {
-  testPrisma,
+  addMetrics,
   clearDatabase,
+  createTestCampaign,
+  createTestShow,
   createTestUser,
-  createTestCampaignWithMetrics,
+  testPrisma,
 } from './helpers/db';
 
-// Force the Prisma singleton in app.ts to also point at the test DB
-process.env['DATABASE_URL'] =
-  process.env['TEST_DATABASE_URL'] ??
-  'postgresql://postgres:secret@localhost:5432/campaign_analytics_test?schema=public';
-
 const app = createApp();
+const INGEST_KEY = process.env['INGEST_API_KEY'] as string;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-/** Logs in and returns a Bearer token string ready to be put in an Authorization header */
-async function getAuthToken(email: string, password: string): Promise<string> {
-  const res = await request(app).post('/auth/login').send({ email, password });
-
-  if (res.status !== 200) {
-    throw new Error(`Login failed: ${JSON.stringify(res.body)}`);
-  }
-
-  const token = (res.body as { data: { token: string } }).data.token;
-  return `Bearer ${token}`;
+async function login(user: { email: string; password: string }): Promise<string> {
+  const res = await request(app).post('/auth/login').send(user);
+  if (res.status !== 200) throw new Error(`Login failed: ${JSON.stringify(res.body)}`);
+  return `Bearer ${(res.body as { data: { token: string } }).data.token}`;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Test Suite
-// ─────────────────────────────────────────────────────────────────────────────
+const validCampaign = {
+  title: 'My New Campaign',
+  advertiser: 'Acme',
+  budgetCents: 500_000,
+  cpmCents: 2500,
+  impressionGoal: 200_000,
+  startsAt: '2030-01-01T00:00:00.000Z',
+  endsAt: '2030-02-01T00:00:00.000Z',
+};
+
+beforeEach(async () => {
+  await clearDatabase();
+});
 
 afterAll(async () => {
   await testPrisma.$disconnect();
 });
 
 describe('GET /campaigns/analytics', () => {
-  beforeEach(async () => {
-    await clearDatabase();
-  });
-
-  // ── Happy Path ─────────────────────────────────────────────────────────────
-
-  describe('Happy path — correct aggregation', () => {
-    it('should return correct aggregated views and clicks for each campaign', async () => {
-      // ── ARRANGE ────────────────────────────────────────────────────────────
-      const user = await createTestUser({ email: 'analytics-user@test.com' });
-
-      // Campaign A: 3 metric rows
-      // Expected totalViews: 1500 + 2000 + 1800 = 5300
-      // Expected totalClicks:   75 +  120 +   90 =  285
-      await createTestCampaignWithMetrics(user.id, 'Summer Sale 2024', CampaignStatus.ACTIVE, [
-        { views: 1500, clicks: 75 },
-        { views: 2000, clicks: 120 },
-        { views: 1800, clicks: 90 },
-      ]);
-
-      // Campaign B: 2 metric rows
-      // Expected totalViews:  500 + 750 = 1250
-      // Expected totalClicks:  20 +  35 =   55
-      await createTestCampaignWithMetrics(user.id, 'Brand Awareness Q3', CampaignStatus.PAUSED, [
-        { views: 500, clicks: 20 },
-        { views: 750, clicks: 35 },
-      ]);
-
-      const token = await getAuthToken(user.email, user.password);
-
-      // ── ACT ────────────────────────────────────────────────────────────────
-      const res = await request(app)
-        .get('/campaigns/analytics')
-        .set('Authorization', token);
-
-      // ── ASSERT ─────────────────────────────────────────────────────────────
-      expect(res.status).toBe(200);
-      expect(res.body.status).toBe('success');
-
-      const data = res.body.data as Array<{
-        id: string;
-        title: string;
-        status: string;
-        totalViews: number;
-        totalClicks: number;
-      }>;
-
-      expect(data).toHaveLength(2);
-
-      const campaignA = data.find((c) => c.title === 'Summer Sale 2024');
-      const campaignB = data.find((c) => c.title === 'Brand Awareness Q3');
-
-      expect(campaignA).toBeDefined();
-      expect(campaignA?.totalViews).toBe(5300);
-      expect(campaignA?.totalClicks).toBe(285);
-      expect(campaignA?.status).toBe('ACTIVE');
-
-      expect(campaignB).toBeDefined();
-      expect(campaignB?.totalViews).toBe(1250);
-      expect(campaignB?.totalClicks).toBe(55);
-      expect(campaignB?.status).toBe('PAUSED');
+  it('aggregates metrics and derives CTR, spend and delivery', async () => {
+    const user = await createTestUser();
+    const show = await createTestShow();
+    const campaign = await createTestCampaign(user.id, {
+      cpmCents: 2000,
+      impressionGoal: 10_000,
+      budgetCents: 100_000,
     });
+    await addMetrics(campaign.id, show.id, [
+      { impressions: 1500, clicks: 75, completions: 1200 },
+      { impressions: 2000, clicks: 120, completions: 1800 },
+      { impressions: 1500, clicks: 55, completions: 1000 },
+    ]);
 
-    it('should include campaigns with ZERO metrics (totalViews=0, totalClicks=0)', async () => {
-      // ── ARRANGE ────────────────────────────────────────────────────────────
-      // A campaign with NO metric rows — tests the COALESCE(SUM(...), 0) logic
-      const user = await createTestUser({ email: 'zero-metrics@test.com' });
-      await createTestCampaignWithMetrics(user.id, 'Empty Campaign', CampaignStatus.ACTIVE, []);
+    const res = await request(app)
+      .get('/campaigns/analytics')
+      .set('Authorization', await login(user));
 
-      const token = await getAuthToken(user.email, user.password);
-
-      // ── ACT ────────────────────────────────────────────────────────────────
-      const res = await request(app)
-        .get('/campaigns/analytics')
-        .set('Authorization', token);
-
-      // ── ASSERT ─────────────────────────────────────────────────────────────
-      expect(res.status).toBe(200);
-
-      const data = res.body.data as Array<{ title: string; totalViews: number; totalClicks: number }>;
-      expect(data).toHaveLength(1);
-      expect(data[0]?.totalViews).toBe(0);
-      expect(data[0]?.totalClicks).toBe(0);
-    });
-
-    it('should return an empty array when the user has no campaigns', async () => {
-      // ── ARRANGE ────────────────────────────────────────────────────────────
-      const user = await createTestUser({ email: 'no-campaigns@test.com' });
-      const token = await getAuthToken(user.email, user.password);
-
-      // ── ACT ────────────────────────────────────────────────────────────────
-      const res = await request(app)
-        .get('/campaigns/analytics')
-        .set('Authorization', token);
-
-      // ── ASSERT ─────────────────────────────────────────────────────────────
-      expect(res.status).toBe(200);
-      expect(res.body.data).toEqual([]);
+    expect(res.status).toBe(200);
+    expect(res.body.data).toHaveLength(1);
+    expect(res.body.data[0]).toMatchObject({
+      impressions: 5000,
+      clicks: 250,
+      completions: 4000,
+      ctr: 0.05,
+      completionRate: 0.8,
+      spendCents: 10_000,
+      lifetimeSpendCents: 10_000,
+      deliveryRate: 0.5,
+      budgetUsedRate: 0.1,
     });
   });
 
-  // ── Data Isolation ─────────────────────────────────────────────────────────
+  it('includes campaigns with no metrics as zeros', async () => {
+    const user = await createTestUser();
+    await createTestCampaign(user.id);
 
-  describe('Data isolation — only own campaigns returned', () => {
-    it('should NOT return campaigns belonging to another user', async () => {
-      // ── ARRANGE ────────────────────────────────────────────────────────────
-      const userA = await createTestUser({ email: 'user-a@test.com' });
-      const userB = await createTestUser({ email: 'user-b@test.com' });
+    const res = await request(app)
+      .get('/campaigns/analytics')
+      .set('Authorization', await login(user));
 
-      // UserA has 2 campaigns
-      await createTestCampaignWithMetrics(userA.id, 'UserA Campaign 1', CampaignStatus.ACTIVE, [
-        { views: 100, clicks: 10 },
-      ]);
-      await createTestCampaignWithMetrics(userA.id, 'UserA Campaign 2', CampaignStatus.ACTIVE, [
-        { views: 200, clicks: 20 },
-      ]);
-
-      // UserB has 1 campaign
-      await createTestCampaignWithMetrics(userB.id, 'UserB Campaign', CampaignStatus.ACTIVE, [
-        { views: 9999, clicks: 999 },
-      ]);
-
-      // Authenticate as UserA
-      const tokenA = await getAuthToken(userA.email, userA.password);
-
-      // ── ACT ────────────────────────────────────────────────────────────────
-      const res = await request(app)
-        .get('/campaigns/analytics')
-        .set('Authorization', tokenA);
-
-      // ── ASSERT ─────────────────────────────────────────────────────────────
-      expect(res.status).toBe(200);
-
-      const data = res.body.data as Array<{ title: string }>;
-      expect(data).toHaveLength(2);
-      expect(data.map((c) => c.title)).not.toContain('UserB Campaign');
-    });
+    expect(res.body.data[0]).toMatchObject({ impressions: 0, clicks: 0, ctr: 0 });
   });
 
-  // ── Authentication ─────────────────────────────────────────────────────────
+  it('limits totals to the date range but keeps lifetime delivery', async () => {
+    const user = await createTestUser();
+    const show = await createTestShow();
+    const campaign = await createTestCampaign(user.id);
+    await addMetrics(campaign.id, show.id, [
+      { impressions: 100, clicks: 1 },
+      { impressions: 900, clicks: 9 },
+    ]);
 
-  describe('Authentication guard', () => {
-    it('should return 401 when no Authorization header is provided', async () => {
-      const res = await request(app).get('/campaigns/analytics');
+    const from = new Date(Date.now() - 2 * 3_600_000).toISOString();
+    const res = await request(app)
+      .get('/campaigns/analytics')
+      .query({ from })
+      .set('Authorization', await login(user));
 
-      expect(res.status).toBe(401);
-      expect(res.body.status).toBe('error');
-    });
+    expect(res.body.data[0]).toMatchObject({ impressions: 100, lifetimeImpressions: 1000 });
+  });
 
-    it('should return 401 when a malformed token is provided', async () => {
-      const res = await request(app)
-        .get('/campaigns/analytics')
-        .set('Authorization', 'Bearer this.is.not.a.valid.jwt');
+  it('rejects a reversed date range', async () => {
+    const user = await createTestUser();
+    const res = await request(app)
+      .get('/campaigns/analytics')
+      .query({ from: '2030-02-01', to: '2030-01-01' })
+      .set('Authorization', await login(user));
 
-      expect(res.status).toBe(401);
-      expect(res.body.status).toBe('error');
-    });
+    expect(res.status).toBe(422);
+  });
 
-    it('should return 401 when the Authorization header is missing Bearer prefix', async () => {
-      const res = await request(app)
-        .get('/campaigns/analytics')
-        .set('Authorization', 'just-a-token-without-bearer');
+  it('never returns another advertiser’s campaigns', async () => {
+    const owner = await createTestUser({ email: 'owner@test.com' });
+    const other = await createTestUser({ email: 'other@test.com' });
+    await createTestCampaign(owner.id, { title: 'Mine' });
+    await createTestCampaign(other.id, { title: 'Theirs' });
 
-      expect(res.status).toBe(401);
-    });
+    const res = await request(app)
+      .get('/campaigns/analytics')
+      .set('Authorization', await login(owner));
+
+    expect(res.body.data.map((c: { title: string }) => c.title)).toEqual(['Mine']);
+  });
+
+  it('shows admins every campaign', async () => {
+    const admin = await createTestUser({ email: 'admin@test.com', role: Role.ADMIN });
+    const advertiser = await createTestUser({ email: 'advertiser@test.com' });
+    await createTestCampaign(advertiser.id);
+
+    const res = await request(app)
+      .get('/campaigns/analytics')
+      .set('Authorization', await login(admin));
+
+    expect(res.body.data).toHaveLength(1);
+    expect(res.body.data[0].ownerEmail).toBe('advertiser@test.com');
+  });
+
+  it.each([
+    ['no header', undefined],
+    ['a malformed token', 'Bearer this.is.not.a.valid.jwt'],
+    ['no Bearer prefix', 'just-a-token'],
+  ])('returns 401 with %s', async (_name, header) => {
+    const req = request(app).get('/campaigns/analytics');
+    const res = await (header ? req.set('Authorization', header) : req);
+
+    expect(res.status).toBe(401);
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Auth endpoint tests
-// ─────────────────────────────────────────────────────────────────────────────
+describe('GET /campaigns/:id/analytics', () => {
+  it('returns the campaign, its timeseries and breakdowns', async () => {
+    const user = await createTestUser();
+    const show = await createTestShow('Harbour Lights');
+    const campaign = await createTestCampaign(user.id);
+    await addMetrics(campaign.id, show.id, [
+      { impressions: 300, clicks: 3, country: 'DE' },
+      { impressions: 100, clicks: 1, country: 'FR' },
+    ]);
 
-describe('POST /auth/login', () => {
-  beforeEach(async () => {
-    await clearDatabase();
+    const res = await request(app)
+      .get(`/campaigns/${campaign.id}/analytics`)
+      .query({ from: new Date(Date.now() - 86_400_000).toISOString() })
+      .set('Authorization', await login(user));
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.campaign.impressions).toBe(400);
+    expect(res.body.data.timeseries).toHaveLength(2);
+    expect(res.body.data.breakdown.country).toMatchObject([
+      { key: 'DE', impressions: 300 },
+      { key: 'FR', impressions: 100 },
+    ]);
+    expect(res.body.data.breakdown.slot).toMatchObject([{ key: 'MID_ROLL', impressions: 400 }]);
+    expect(res.body.data.breakdown.show).toMatchObject([{ key: 'Harbour Lights' }]);
   });
 
-  it('should return a JWT token with correct credentials', async () => {
-    const user = await createTestUser({ email: 'login-test@test.com', password: 'MyPass1234!' });
+  it('returns 404 for another advertiser’s campaign', async () => {
+    const owner = await createTestUser({ email: 'owner@test.com' });
+    const other = await createTestUser({ email: 'other@test.com' });
+    const campaign = await createTestCampaign(owner.id);
+
+    const res = await request(app)
+      .get(`/campaigns/${campaign.id}/analytics`)
+      .set('Authorization', await login(other));
+
+    expect(res.status).toBe(404);
+  });
+});
+
+describe('POST /auth/login', () => {
+  it('returns a JWT and the user', async () => {
+    const user = await createTestUser({ email: 'login@test.com', password: 'MyPass1234!' });
+
+    const res = await request(app).post('/auth/login').send(user);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.token.split('.')).toHaveLength(3);
+    expect(res.body.data.user).toMatchObject({ email: 'login@test.com', role: 'ADVERTISER' });
+  });
+
+  it('accepts an email with different casing', async () => {
+    const user = await createTestUser({ email: 'mixed@test.com' });
 
     const res = await request(app)
       .post('/auth/login')
-      .send({ email: user.email, password: user.password });
+      .send({ email: 'MIXED@test.com', password: user.password });
 
     expect(res.status).toBe(200);
-    expect(res.body.status).toBe('success');
-    expect(res.body.data).toHaveProperty('token');
-    expect(typeof res.body.data.token).toBe('string');
-    expect(res.body.data.token.split('.')).toHaveLength(3); // JWT = header.payload.signature
   });
 
-  it('should return 401 with wrong password', async () => {
-    const user = await createTestUser({ email: 'wrong-pass@test.com' });
+  it('returns 401 with a wrong password', async () => {
+    const user = await createTestUser();
 
     const res = await request(app)
       .post('/auth/login')
       .send({ email: user.email, password: 'WrongPassword!' });
 
     expect(res.status).toBe(401);
-    expect(res.body.status).toBe('error');
   });
 
-  it('should return 401 for non-existent email', async () => {
+  it('does real hashing work for an unknown email', async () => {
+    const compare = jest.spyOn(bcrypt, 'compare');
+
     const res = await request(app)
       .post('/auth/login')
       .send({ email: 'nobody@example.com', password: 'SomePass1234' });
 
     expect(res.status).toBe(401);
+    const hash = compare.mock.calls[0]?.[1] as string;
+    expect(hash).toHaveLength(60);
+    expect(bcrypt.getRounds(hash)).toBe(12);
+    compare.mockRestore();
   });
 
-  it('should return 422 when body fails validation', async () => {
+  it('returns 422 when the body fails validation', async () => {
     const res = await request(app)
       .post('/auth/login')
       .send({ email: 'not-an-email', password: 'short' });
@@ -274,94 +249,319 @@ describe('POST /auth/login', () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Campaigns CRUD tests
-// ─────────────────────────────────────────────────────────────────────────────
+describe('Campaign management', () => {
+  it('lists with pagination and a status filter', async () => {
+    const user = await createTestUser();
+    await createTestCampaign(user.id, { title: 'Running' });
+    await createTestCampaign(user.id, { title: 'Stopped', status: CampaignStatus.PAUSED });
+    const token = await login(user);
 
-describe('Campaigns CRUD', () => {
-  beforeEach(async () => {
-    await clearDatabase();
+    const all = await request(app).get('/campaigns').set('Authorization', token);
+    expect(all.body.meta).toMatchObject({ total: 2, page: 1, limit: 20, totalPages: 1 });
+
+    const active = await request(app).get('/campaigns?status=ACTIVE').set('Authorization', token);
+    expect(active.body.data.map((c: { title: string }) => c.title)).toEqual(['Running']);
   });
 
-  describe('GET /campaigns', () => {
-    it('should return a paginated list of the user own campaigns', async () => {
-      const user = await createTestUser({ email: 'list-test@test.com' });
+  it('creates a campaign with targeting', async () => {
+    const user = await createTestUser();
 
-      await createTestCampaignWithMetrics(user.id, 'Campaign One', CampaignStatus.ACTIVE, []);
-      await createTestCampaignWithMetrics(user.id, 'Campaign Two', CampaignStatus.PAUSED, []);
+    const res = await request(app)
+      .post('/campaigns')
+      .set('Authorization', await login(user))
+      .send({ ...validCampaign, targetCountries: ['de'], targetSlots: ['PRE_ROLL'] });
 
-      const token = await getAuthToken(user.email, user.password);
-      const res = await request(app).get('/campaigns').set('Authorization', token);
-
-      expect(res.status).toBe(200);
-      expect(res.body.data).toHaveLength(2);
-      expect(res.body.meta).toMatchObject({
-        total: 2,
-        page: 1,
-        limit: 20,
-        totalPages: 1,
-      });
-    });
-
-    it('should support filtering by status', async () => {
-      const user = await createTestUser({ email: 'filter-test@test.com' });
-
-      await createTestCampaignWithMetrics(user.id, 'Active Camp', CampaignStatus.ACTIVE, []);
-      await createTestCampaignWithMetrics(user.id, 'Paused Camp', CampaignStatus.PAUSED, []);
-
-      const token = await getAuthToken(user.email, user.password);
-      const res = await request(app)
-        .get('/campaigns?status=ACTIVE')
-        .set('Authorization', token);
-
-      expect(res.status).toBe(200);
-      expect(res.body.data).toHaveLength(1);
-      expect(res.body.data[0].status).toBe('ACTIVE');
+    expect(res.status).toBe(201);
+    expect(res.body.data).toMatchObject({
+      title: 'My New Campaign',
+      status: 'ACTIVE',
+      userId: user.id,
+      targetCountries: ['DE'],
+      targetSlots: ['PRE_ROLL'],
     });
   });
 
-  describe('POST /campaigns', () => {
-    it('should create a new campaign and return 201', async () => {
-      const user = await createTestUser({ email: 'create-test@test.com' });
-      const token = await getAuthToken(user.email, user.password);
+  it.each([
+    ['a missing title', { title: undefined }],
+    ['a short title', { title: 'AB' }],
+    ['a negative budget', { budgetCents: -1 }],
+    ['an end before the start', { endsAt: '2029-01-01T00:00:00.000Z' }],
+    ['an unknown slot', { targetSlots: ['HALF_TIME'] }],
+  ])('rejects %s', async (_name, change) => {
+    const user = await createTestUser();
 
-      const res = await request(app)
-        .post('/campaigns')
-        .set('Authorization', token)
-        .send({ title: 'My New Campaign', status: 'ACTIVE' });
+    const res = await request(app)
+      .post('/campaigns')
+      .set('Authorization', await login(user))
+      .send({ ...validCampaign, ...change });
 
-      expect(res.status).toBe(201);
-      expect(res.body.status).toBe('success');
-      expect(res.body.data).toMatchObject({
-        title: 'My New Campaign',
-        status: 'ACTIVE',
-        userId: user.id,
-      });
-      expect(res.body.data.id).toBeDefined();
-    });
+    expect(res.status).toBe(422);
+  });
 
-    it('should return 422 if title is missing', async () => {
-      const user = await createTestUser({ email: 'validation-test@test.com' });
-      const token = await getAuthToken(user.email, user.password);
+  it('pauses a campaign', async () => {
+    const user = await createTestUser();
+    const campaign = await createTestCampaign(user.id);
 
-      const res = await request(app)
-        .post('/campaigns')
-        .set('Authorization', token)
-        .send({ status: 'ACTIVE' });
+    const res = await request(app)
+      .patch(`/campaigns/${campaign.id}`)
+      .set('Authorization', await login(user))
+      .send({ status: 'PAUSED' });
 
-      expect(res.status).toBe(422);
-    });
+    expect(res.status).toBe(200);
+    expect(res.body.data.status).toBe('PAUSED');
+    expect(res.body.data.title).toBe(campaign.title);
+  });
 
-    it('should return 422 if title is too short', async () => {
-      const user = await createTestUser({ email: 'short-title@test.com' });
-      const token = await getAuthToken(user.email, user.password);
+  it('checks a partial date change against the stored dates', async () => {
+    const user = await createTestUser();
+    const campaign = await createTestCampaign(user.id);
 
-      const res = await request(app)
-        .post('/campaigns')
-        .set('Authorization', token)
-        .send({ title: 'AB' }); // Less than 3 chars
+    const res = await request(app)
+      .patch(`/campaigns/${campaign.id}`)
+      .set('Authorization', await login(user))
+      .send({ endsAt: '2000-01-01T00:00:00.000Z' });
 
-      expect(res.status).toBe(422);
-    });
+    expect(res.status).toBe(422);
+  });
+
+  it('refuses to restart a completed campaign', async () => {
+    const user = await createTestUser();
+    const campaign = await createTestCampaign(user.id, { status: CampaignStatus.COMPLETED });
+
+    const res = await request(app)
+      .patch(`/campaigns/${campaign.id}`)
+      .set('Authorization', await login(user))
+      .send({ status: 'ACTIVE' });
+
+    expect(res.status).toBe(409);
+  });
+
+  it('deletes a campaign and its metrics', async () => {
+    const user = await createTestUser();
+    const show = await createTestShow();
+    const campaign = await createTestCampaign(user.id);
+    await addMetrics(campaign.id, show.id, [{ impressions: 10, clicks: 1 }]);
+
+    const res = await request(app)
+      .delete(`/campaigns/${campaign.id}`)
+      .set('Authorization', await login(user));
+
+    expect(res.status).toBe(204);
+    expect(await testPrisma.metric.count()).toBe(0);
+  });
+
+  it('does not let one advertiser change another’s campaign', async () => {
+    const owner = await createTestUser({ email: 'owner@test.com' });
+    const other = await createTestUser({ email: 'other@test.com' });
+    const campaign = await createTestCampaign(owner.id);
+    const token = await login(other);
+
+    const patched = await request(app)
+      .patch(`/campaigns/${campaign.id}`)
+      .set('Authorization', token)
+      .send({ status: 'PAUSED' });
+    const deleted = await request(app)
+      .delete(`/campaigns/${campaign.id}`)
+      .set('Authorization', token);
+
+    expect(patched.status).toBe(404);
+    expect(deleted.status).toBe(404);
+  });
+});
+
+describe('GET /ad-decision', () => {
+  const decide = (query: Record<string, string>, key = INGEST_KEY) =>
+    request(app).get('/ad-decision').set('x-ingest-key', key).query(query);
+
+  const placement = { slot: 'MID_ROLL', country: 'DE', device: 'CTV' };
+
+  it('requires the ingest key', async () => {
+    const show = await createTestShow();
+
+    const res = await decide({ ...placement, showId: show.id }, 'wrong-key');
+
+    expect(res.status).toBe(401);
+  });
+
+  it('serves an eligible campaign with no targeting', async () => {
+    const user = await createTestUser();
+    const show = await createTestShow();
+    await createTestCampaign(user.id, { title: 'Everywhere' });
+
+    const res = await decide({ ...placement, showId: show.id });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.title).toBe('Everywhere');
+  });
+
+  it('picks the campaign furthest behind schedule', async () => {
+    const user = await createTestUser();
+    const show = await createTestShow();
+    const ahead = await createTestCampaign(user.id, { title: 'Ahead' });
+    await createTestCampaign(user.id, { title: 'Behind' });
+    await addMetrics(ahead.id, show.id, [{ impressions: 400_000, clicks: 0 }]);
+
+    const res = await decide({ ...placement, showId: show.id });
+
+    expect(res.body.data.title).toBe('Behind');
+  });
+
+  it.each([
+    ['country', { targetCountries: ['FR'] }, { country: 'FR' }],
+    ['device', { targetDevices: ['MOBILE' as const] }, { device: 'MOBILE' }],
+    ['slot', { targetSlots: ['PRE_ROLL' as const] }, { slot: 'PRE_ROLL' }],
+  ])('respects %s targeting', async (_name, targeting, matching) => {
+    const user = await createTestUser();
+    const show = await createTestShow();
+    await createTestCampaign(user.id, targeting);
+
+    const miss = await decide({ ...placement, showId: show.id });
+    expect(miss.body.data).toBeNull();
+
+    const hit = await decide({ ...placement, showId: show.id, ...matching });
+    expect(hit.body.data).not.toBeNull();
+  });
+
+  it('matches genre targeting', async () => {
+    const user = await createTestUser();
+    const show = await createTestShow('Little Explorers', 'Kids');
+    await createTestCampaign(user.id, { targetGenres: ['Kids'] });
+
+    const res = await decide({ ...placement, showId: show.id });
+
+    expect(res.body.data).not.toBeNull();
+  });
+
+  it.each([
+    ['paused', { status: CampaignStatus.PAUSED }],
+    ['not started', { startsAt: new Date(Date.now() + 3_600_000) }],
+    ['ended', { endsAt: new Date(Date.now() - 3_600_000) }],
+  ])('skips %s campaigns', async (_name, state) => {
+    const user = await createTestUser();
+    const show = await createTestShow();
+    await createTestCampaign(user.id, state);
+
+    const res = await decide({ ...placement, showId: show.id });
+
+    expect(res.body.data).toBeNull();
+  });
+
+  it('skips a campaign that reached its impression goal', async () => {
+    const user = await createTestUser();
+    const show = await createTestShow();
+    const campaign = await createTestCampaign(user.id, { impressionGoal: 100 });
+    await addMetrics(campaign.id, show.id, [{ impressions: 100, clicks: 0 }]);
+
+    const res = await decide({ ...placement, showId: show.id });
+
+    expect(res.body.data).toBeNull();
+  });
+
+  it('skips a campaign with no budget left', async () => {
+    const user = await createTestUser();
+    const show = await createTestShow();
+    const campaign = await createTestCampaign(user.id, { budgetCents: 1000, cpmCents: 1000 });
+    await addMetrics(campaign.id, show.id, [{ impressions: 1000, clicks: 0 }]);
+
+    const res = await decide({ ...placement, showId: show.id });
+
+    expect(res.body.data).toBeNull();
+  });
+});
+
+describe('POST /events', () => {
+  const event = (campaignId: string, showId: string, type: string) => ({
+    type,
+    campaignId,
+    showId,
+    slot: 'MID_ROLL',
+    country: 'DE',
+    device: 'CTV',
+  });
+
+  const send = (events: unknown[], key = INGEST_KEY) =>
+    request(app).post('/events').set('x-ingest-key', key).send({ events });
+
+  it('rolls events up and adds to existing rows across batches', async () => {
+    const user = await createTestUser();
+    const show = await createTestShow();
+    const campaign = await createTestCampaign(user.id);
+    const impression = event(campaign.id, show.id, 'IMPRESSION');
+    const click = event(campaign.id, show.id, 'CLICK');
+    const completion = event(campaign.id, show.id, 'COMPLETION');
+
+    const first = await send([impression, impression, click, completion]);
+    await send([impression]);
+
+    expect(first.status).toBe(202);
+    expect(first.body.data).toMatchObject({ received: 4, rollups: 1, ignored: 0 });
+
+    const rows = await testPrisma.metric.findMany();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ impressions: 3, clicks: 1, completions: 1 });
+  });
+
+  it('ignores events for unknown campaigns', async () => {
+    const show = await createTestShow();
+
+    const res = await send([event('missing', show.id, 'IMPRESSION')]);
+
+    expect(res.status).toBe(202);
+    expect(res.body.data).toMatchObject({ received: 1, ignored: 1 });
+  });
+
+  it('completes a campaign when it reaches its goal', async () => {
+    const user = await createTestUser();
+    const show = await createTestShow();
+    const campaign = await createTestCampaign(user.id, { impressionGoal: 2 });
+    const impression = event(campaign.id, show.id, 'IMPRESSION');
+
+    await send([impression, impression]);
+
+    const stored = await testPrisma.campaign.findUnique({ where: { id: campaign.id } });
+    expect(stored?.status).toBe('COMPLETED');
+  });
+
+  it('completes a campaign when its budget runs out', async () => {
+    const user = await createTestUser();
+    const show = await createTestShow();
+    const campaign = await createTestCampaign(user.id, { budgetCents: 1, cpmCents: 1000 });
+
+    await send([event(campaign.id, show.id, 'IMPRESSION')]);
+
+    const stored = await testPrisma.campaign.findUnique({ where: { id: campaign.id } });
+    expect(stored?.status).toBe('COMPLETED');
+  });
+
+  it('rejects stale events, bad types and a wrong key', async () => {
+    const stale = {
+      ...event('x', 'y', 'IMPRESSION'),
+      occurredAt: '2000-01-01T00:00:00.000Z',
+    };
+
+    expect((await send([stale])).status).toBe(422);
+    expect((await send([event('x', 'y', 'HOVER')])).status).toBe(422);
+    expect((await send([], INGEST_KEY)).status).toBe(422);
+    expect((await send([event('x', 'y', 'CLICK')], 'wrong')).status).toBe(401);
+  });
+});
+
+describe('Service basics', () => {
+  it('reports health including the database', async () => {
+    const res = await request(app).get('/health');
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('ok');
+  });
+
+  it('returns the show catalogue to logged-in users', async () => {
+    const user = await createTestUser();
+    await createTestShow('Harbour Lights', 'Drama');
+
+    const res = await request(app)
+      .get('/shows')
+      .set('Authorization', await login(user));
+
+    expect(res.body.data).toMatchObject([{ title: 'Harbour Lights', genre: 'Drama' }]);
   });
 });

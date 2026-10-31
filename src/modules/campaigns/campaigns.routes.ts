@@ -15,31 +15,36 @@ const campaignsRouter = Router();
 // Apply JWT guard to all routes in this router
 campaignsRouter.use(authenticate);
 
-/**
- * @route   GET /campaigns/analytics
- * @desc    Aggregated views + clicks per campaign (single SQL query)
- * @access  Private
- */
 campaignsRouter.get('/analytics', (req, res, next) => {
   void campaignsController.analytics(req, res, next);
 });
 
-/**
- * @route   GET /campaigns
- * @desc    List authenticated user's campaigns (paginated, filterable)
- * @access  Private
- */
+campaignsRouter.get('/analytics/timeseries', (req, res, next) => {
+  void campaignsController.timeseries(req, res, next);
+});
+
 campaignsRouter.get('/', (req, res, next) => {
   void campaignsController.list(req, res, next);
 });
 
-/**
- * @route   POST /campaigns
- * @desc    Create a new campaign
- * @access  Private
- */
 campaignsRouter.post('/', (req, res, next) => {
   void campaignsController.create(req, res, next);
+});
+
+campaignsRouter.get('/:id/analytics', (req, res, next) => {
+  void campaignsController.campaignAnalytics(req, res, next);
+});
+
+campaignsRouter.get('/:id', (req, res, next) => {
+  void campaignsController.get(req, res, next);
+});
+
+campaignsRouter.patch('/:id', (req, res, next) => {
+  void campaignsController.update(req, res, next);
+});
+
+campaignsRouter.delete('/:id', (req, res, next) => {
+  void campaignsController.remove(req, res, next);
 });
 
 export { campaignsRouter };

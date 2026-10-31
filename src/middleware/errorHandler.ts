@@ -8,7 +8,7 @@
  * clients and gives us a single place to add logging/monitoring hooks.
  */
 import { Request, Response, NextFunction } from 'express';
-import { ZodError } from 'zod';
+import { z, ZodError } from 'zod';
 import { JsonWebTokenError, TokenExpiredError } from 'jsonwebtoken';
 
 /** Structured error response shape */
@@ -44,7 +44,7 @@ export const errorHandler = (
     const response: ErrorResponse = {
       status: 'error',
       message: 'Validation failed.',
-      errors: err.flatten().fieldErrors,
+      errors: z.flattenError(err).fieldErrors,
     };
     res.status(422).json(response);
     return;

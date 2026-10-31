@@ -22,6 +22,21 @@ enum Role {
 enum CampaignStatus {
   ACTIVE
   PAUSED
+  COMPLETED
+}
+
+/// Where an ad runs inside an episode.
+enum AdSlot {
+  PRE_ROLL
+  MID_ROLL
+  POST_ROLL
+}
+
+enum Device {
+  CTV
+  MOBILE
+  WEB
+  TABLET
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -30,45 +45,73 @@ enum CampaignStatus {
 
 /// Platform user — can be an Admin or an Advertiser.
 model User {
-  id           String     @id @default(cuid())
-  email        String     @unique
-  passwordHash String     @map("password_hash")
-  role         Role       @default(ADVERTISER)
-  createdAt    DateTime   @default(now()) @map("created_at")
-  updatedAt    DateTime   @updatedAt @map("updated_at")
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  role         Role     @default(ADVERTISER)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   campaigns Campaign[]
 
   @@map("users")
 }
 
-/// An advertising campaign owned by a User.
+/// A title in the streaming catalogue that ads can run against.
+model Show {
+  id    String @id @default(cuid())
+  title String @unique
+  genre String
+
+  metrics Metric[]
+
+  @@map("shows")
+}
+
+/// An advertising campaign owned by a User. Empty target lists mean "all".
 model Campaign {
-  id        String         @id @default(cuid())
-  userId    String         @map("user_id")
-  title     String
-  status    CampaignStatus @default(ACTIVE)
-  createdAt DateTime       @default(now()) @map("created_at")
-  updatedAt DateTime       @updatedAt @map("updated_at")
+  id              String         @id @default(cuid())
+  userId          String         @map("user_id")
+  title           String
+  advertiser      String
+  status          CampaignStatus @default(ACTIVE)
+  budgetCents     Int            @map("budget_cents")
+  cpmCents        Int            @map("cpm_cents")
+  impressionGoal  Int            @map("impression_goal")
+  startsAt        DateTime       @map("starts_at") @db.Timestamptz(3)
+  endsAt          DateTime       @map("ends_at") @db.Timestamptz(3)
+  targetCountries String[] @default([]) @map("target_countries")
+  targetGenres    String[] @default([]) @map("target_genres")
+  targetDevices   Device[] @default([]) @map("target_devices")
+  targetSlots     AdSlot[] @default([]) @map("target_slots")
+  createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   metrics Metric[]
 
   @@index([userId])
+  @@index([status, startsAt, endsAt])
   @@map("campaigns")
 }
 
-/// Daily/periodic performance metrics recorded for a Campaign.
+/// Hourly rollup of ad events. One row per campaign, hour, show, slot, country
+/// and device, so reads stay fast however many raw events arrive.
 model Metric {
-  id         String   @id @default(cuid())
-  campaignId String   @map("campaign_id")
-  views      Int      @default(0)
-  clicks     Int      @default(0)
-  recordedAt DateTime @default(now()) @map("recorded_at")
+  campaignId  String   @map("campaign_id")
+  showId      String   @map("show_id")
+  slot        AdSlot
+  country     String   @db.Char(2)
+  device      Device
+  bucket      DateTime @db.Timestamptz(3)
+  impressions Int      @default(0)
+  clicks      Int      @default(0)
+  completions Int      @default(0)
 
   campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  show     Show     @relation(fields: [showId], references: [id], onDelete: Restrict)
 
-  @@index([campaignId])
-  @@index([recordedAt])
+  @@id([campaignId, bucket, showId, slot, country, device])
+  @@index([bucket])
   @@map("metrics")
 }

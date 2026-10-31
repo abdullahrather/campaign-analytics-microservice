@@ -1,9 +1,6 @@
-version: '3.9'
-
+# Runs the database and the app with demo data. The dashboard is at http://localhost:3000.
+# The default secrets are for local demos only.
 services:
-  # ─────────────────────────────────────────────────────────────────────────────
-  # PostgreSQL Database
-  # ─────────────────────────────────────────────────────────────────────────────
   db:
     image: postgres:16-alpine
     container_name: campaign_analytics_db
@@ -12,40 +9,31 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: secret
       POSTGRES_DB: campaign_analytics
-    ports:
-      - '5432:5432'
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./scripts/init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U postgres']
       interval: 5s
       timeout: 5s
       retries: 10
 
-  # ─────────────────────────────────────────────────────────────────────────────
-  # API Service (Development — hot reload)
-  # ─────────────────────────────────────────────────────────────────────────────
   api:
     build:
       context: .
-      target: development
+      target: builder
     container_name: campaign_analytics_api
     restart: unless-stopped
-    env_file:
-      - .env
     environment:
-      DATABASE_URL: postgresql://postgres:secret@db:5432/campaign_analytics?schema=public
       NODE_ENV: development
+      DATABASE_URL: postgresql://postgres:secret@db:5432/campaign_analytics?schema=public
+      JWT_SECRET: ${JWT_SECRET:-local-demo-secret-that-is-at-least-32-characters}
+      INGEST_API_KEY: ${INGEST_API_KEY:-local-demo-ingest-key}
     ports:
       - '${PORT:-3000}:3000'
-    volumes:
-      - .:/app
-      - /app/node_modules   # Prevent host node_modules from overwriting container's
     depends_on:
       db:
         condition: service_healthy
-    command: sh -c "npx prisma migrate deploy && npm run dev"
+    command: sh -c "npx prisma migrate deploy && npx tsx prisma/seed.ts --if-empty && node dist/server.js"
 
 volumes:
   postgres_data:

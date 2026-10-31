@@ -1,0 +1,307 @@
+import { useState } from 'react';
+import {
+  Area,
+  AreaChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
+import type { Campaign, Pacing, Point, Row, Status, Totals } from './api';
+import { formatCompact, formatEuros, formatNumber, formatPercent, formatTick } from './format';
+import { RANGES } from './hooks';
+
+const PACING: Record<Pacing, { label: string; icon: string; tone: string }> = {
+  AHEAD: { label: 'Ahead', icon: '▲', tone: 'good' },
+  ON_TRACK: { label: 'On track', icon: '●', tone: 'good' },
+  BEHIND: { label: 'Behind', icon: '▼', tone: 'serious' },
+  NOT_STARTED: { label: 'Not started', icon: '○', tone: 'neutral' },
+  FINISHED: { label: 'Finished', icon: '■', tone: 'neutral' },
+};
+
+const STATUS: Record<Status, { label: string; tone: string }> = {
+  ACTIVE: { label: 'Active', tone: 'good' },
+  PAUSED: { label: 'Paused', tone: 'warning' },
+  COMPLETED: { label: 'Completed', tone: 'neutral' },
+};
+
+export const PacingBadge = ({ pacing }: { pacing: Pacing }) => {
+  const { label, icon, tone } = PACING[pacing];
+  return (
+    <span className={`badge badge-${tone}`}>
+      <span aria-hidden="true">{icon}</span> {label}
+    </span>
+  );
+};
+
+export const StatusBadge = ({ status }: { status: Status }) => {
+  const { label, tone } = STATUS[status];
+  return <span className={`badge badge-${tone}`}>{label}</span>;
+};
+
+export const RangePicker = ({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (id: string) => void;
+}) => (
+  <div className="segmented" role="group" aria-label="Date range">
+    {RANGES.map((range) => (
+      <button
+        key={range.id}
+        type="button"
+        aria-pressed={value === range.id}
+        onClick={() => onChange(range.id)}
+      >
+        {range.label}
+      </button>
+    ))}
+  </div>
+);
+
+export const Kpis = ({ totals, spendCents }: { totals: Totals; spendCents: number }) => {
+  const items = [
+    { label: 'Impressions', value: formatCompact(totals.impressions) },
+    { label: 'Clicks', value: formatCompact(totals.clicks) },
+    { label: 'Click-through rate', value: formatPercent(totals.ctr, 2) },
+    { label: 'Ads watched to the end', value: formatPercent(totals.completionRate) },
+    { label: 'Spend', value: formatEuros(spendCents) },
+  ];
+  return (
+    <dl className="kpis">
+      {items.map((item) => (
+        <div key={item.label} className="card kpi">
+          <dt>{item.label}</dt>
+          <dd>{item.value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+};
+
+const isHourly = (points: Point[]): boolean => {
+  if (points.length < 2) return true;
+  const first = new Date((points[0] as Point).time).getTime();
+  const second = new Date((points[1] as Point).time).getTime();
+  return second - first <= 3_600_000;
+};
+
+const TrendTooltip = ({
+  active,
+  payload,
+  label,
+  hourly,
+  unit,
+}: {
+  active?: boolean;
+  payload?: ReadonlyArray<{ value?: unknown }>;
+  label?: string | number;
+  hourly: boolean;
+  unit: string;
+}) => {
+  if (!active || !payload?.length || !label) return null;
+  const when = new Date(label).toLocaleString('en-GB', {
+    day: 'numeric',
+    month: 'short',
+    ...(hourly ? { hour: '2-digit', minute: '2-digit' } : {}),
+  });
+  return (
+    <div className="tooltip">
+      <div className="tooltip-label">{when}</div>
+      <strong>{formatNumber(Number(payload[0]?.value ?? 0))}</strong> {unit}
+    </div>
+  );
+};
+
+/** One measure per chart, each on its own axis. */
+const Trend = ({
+  title,
+  dataKey,
+  points,
+}: {
+  title: string;
+  dataKey: 'impressions' | 'clicks';
+  points: Point[];
+}) => {
+  const hourly = isHourly(points);
+  const gradient = `fill-${dataKey}`;
+  return (
+    <figure className="chart">
+      <figcaption>{title}</figcaption>
+      <ResponsiveContainer width="100%" height={220}>
+        <AreaChart data={points} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+          <defs>
+            <linearGradient id={gradient} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="var(--series-1)" stopOpacity={0.22} />
+              <stop offset="100%" stopColor="var(--series-1)" stopOpacity={0} />
+            </linearGradient>
+          </defs>
+          <CartesianGrid vertical={false} stroke="var(--grid)" />
+          <XAxis
+            dataKey="time"
+            tickFormatter={(value: string) => formatTick(value, hourly)}
+            tick={{ fill: 'var(--muted)', fontSize: 12 }}
+            tickLine={false}
+            axisLine={{ stroke: 'var(--axis)' }}
+            minTickGap={48}
+          />
+          <YAxis
+            tickFormatter={formatCompact}
+            tick={{ fill: 'var(--muted)', fontSize: 12 }}
+            tickLine={false}
+            axisLine={false}
+            width={48}
+          />
+          <Tooltip
+            content={(props) => (
+              <TrendTooltip
+                active={props.active}
+                payload={props.payload}
+                label={props.label}
+                hourly={hourly}
+                unit={dataKey}
+              />
+            )}
+            cursor={{ stroke: 'var(--axis)' }}
+          />
+          <Area
+            type="monotone"
+            dataKey={dataKey}
+            stroke="var(--series-1)"
+            strokeWidth={2}
+            fill={`url(#${gradient})`}
+            activeDot={{ r: 5, stroke: 'var(--surface)', strokeWidth: 2 }}
+            isAnimationActive={false}
+          />
+        </AreaChart>
+      </ResponsiveContainer>
+    </figure>
+  );
+};
+
+const TrendTable = ({ points }: { points: Point[] }) => {
+  const hourly = isHourly(points);
+  return (
+    <div className="table-scroll trend-table">
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">Time</th>
+            <th scope="col" className="num">
+              Impressions
+            </th>
+            <th scope="col" className="num">
+              Clicks
+            </th>
+            <th scope="col" className="num">
+              CTR
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {[...points].reverse().map((point) => (
+            <tr key={point.time}>
+              <td>{formatTick(point.time, hourly)}</td>
+              <td className="num">{formatNumber(point.impressions)}</td>
+              <td className="num">{formatNumber(point.clicks)}</td>
+              <td className="num">{formatPercent(point.ctr, 2)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+};
+
+export const Trends = ({ points }: { points: Point[] }) => {
+  const [asTable, setAsTable] = useState(false);
+  return (
+    <section className="card">
+      <header className="card-header">
+        <h2>Performance over time</h2>
+        <button type="button" className="link" onClick={() => setAsTable((value) => !value)}>
+          {asTable ? 'Show charts' : 'Show table'}
+        </button>
+      </header>
+      {points.length === 0 ? (
+        <p className="empty">No delivery in this period.</p>
+      ) : asTable ? (
+        <TrendTable points={points} />
+      ) : (
+        <div className="charts">
+          <Trend title="Impressions" dataKey="impressions" points={points} />
+          <Trend title="Clicks" dataKey="clicks" points={points} />
+        </div>
+      )}
+    </section>
+  );
+};
+
+/** Ranked bars: the length shows impressions, and the numbers stay readable beside them. */
+export const Breakdown = ({
+  title,
+  rows,
+  labels,
+}: {
+  title: string;
+  rows: Row[];
+  labels?: Record<string, string>;
+}) => {
+  const largest = Math.max(...rows.map((row) => row.impressions), 1);
+  return (
+    <section className="card">
+      <h2>{title}</h2>
+      {rows.length === 0 ? (
+        <p className="empty">No delivery in this period.</p>
+      ) : (
+        <ul className="bars">
+          {rows.map((row) => (
+            <li key={row.key}>
+              <div className="bar-label">
+                <span>{labels?.[row.key] ?? row.key}</span>
+                <span className="bar-value">
+                  {formatCompact(row.impressions)} · {formatPercent(row.ctr, 2)} CTR
+                </span>
+              </div>
+              <div className="bar-track">
+                <div
+                  className="bar-fill"
+                  style={{ width: `${(row.impressions / largest) * 100}%` }}
+                />
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+};
+
+export const Progress = ({ label, rate }: { label: string; rate: number }) => (
+  <div
+    className="progress"
+    role="progressbar"
+    aria-label={label}
+    aria-valuemin={0}
+    aria-valuemax={100}
+    aria-valuenow={Math.round(Math.min(rate, 1) * 100)}
+  >
+    <div style={{ width: `${Math.min(rate, 1) * 100}%` }} />
+  </div>
+);
+
+export const sumTotals = (campaigns: Campaign[]): Totals & { spendCents: number } => {
+  const impressions = campaigns.reduce((sum, c) => sum + c.impressions, 0);
+  const clicks = campaigns.reduce((sum, c) => sum + c.clicks, 0);
+  const completions = campaigns.reduce((sum, c) => sum + c.completions, 0);
+  return {
+    impressions,
+    clicks,
+    completions,
+    ctr: impressions ? clicks / impressions : 0,
+    completionRate: impressions ? completions / impressions : 0,
+    spendCents: campaigns.reduce((sum, c) => sum + c.spendCents, 0),
+  };
+};

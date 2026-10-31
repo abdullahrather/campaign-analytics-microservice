@@ -1,5 +1,5 @@
 {
-  "name": "campaign-analytics-microservice",
+  "name": "streaming-ad-platform",
   "version": "1.0.0",
   "description": "Ad campaign platform for a streaming service: ad decisions, event tracking, analytics and a dashboard",
   "main": "dist/server.js",
@@ -68,6 +68,6 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/abdullahrather/campaign-analytics-microservice.git"
+    "url": "git+https://github.com/abdullahrather/streaming-ad-platform.git"
   }
 }

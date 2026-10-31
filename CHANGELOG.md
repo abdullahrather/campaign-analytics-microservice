@@ -1,8 +1,8 @@
 # Changelog
 
-The main changes in each version. Every release's full notes are on the [Releases page](https://github.com/abdullahrather/campaign-analytics-microservice/releases).
+The main changes in each version. Every release's full notes are on the [Releases page](https://github.com/abdullahrather/streaming-ad-platform/releases).
 
-## Unreleased
+## 1.2.0
 
 ### Added
 

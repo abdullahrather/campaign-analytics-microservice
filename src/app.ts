@@ -18,6 +18,7 @@ import morgan from 'morgan';
 import { authRouter } from '@/modules/auth/auth.routes';
 import { campaignsRouter } from '@/modules/campaigns/campaigns.routes';
 import { deliveryRouter } from '@/modules/delivery/delivery.routes';
+import { docsRouter } from '@/modules/docs/docs.routes';
 import { showsRouter } from '@/modules/shows/shows.routes';
 import { errorHandler } from '@/middleware/errorHandler';
 import { prisma } from '@/lib/prisma';
@@ -27,6 +28,9 @@ const DASHBOARD_DIR = path.resolve(process.cwd(), 'web', 'dist');
 
 export function createApp(): Application {
   const app = express();
+
+  // Behind a hosting proxy, rate limits need the visitor's address, not the proxy's.
+  app.set('trust proxy', env.TRUST_PROXY);
 
   // ── Security middleware ───────────────────────────────────────────────────
   app.use(
@@ -42,10 +46,15 @@ export function createApp(): Application {
 
   // ── Logging ───────────────────────────────────────────────────────────────
   if (env.NODE_ENV === 'production') {
-    app.use(morgan('combined'));
+    app.use(morgan('combined', { skip: (req) => req.path === '/live' }));
   }
 
-  // ── Health check (no auth required) ──────────────────────────────────────
+  // ── Status checks (no auth required) ─────────────────────────────────────
+  // /live skips the database, so a hosting health check can't keep it awake.
+  app.get('/live', (_req: Request, res: Response) => {
+    res.status(200).json({ status: 'ok' });
+  });
+
   app.get('/health', (_req: Request, res: Response) => {
     prisma.$queryRaw`SELECT 1`
       .then(() => res.status(200).json({ status: 'ok', environment: env.NODE_ENV }))
@@ -53,10 +62,16 @@ export function createApp(): Application {
   });
 
   // ── API routes ────────────────────────────────────────────────────────────
+  app.use(docsRouter);
   app.use('/auth', authRouter);
   app.use('/campaigns', campaignsRouter);
   app.use('/shows', showsRouter);
   app.use(deliveryRouter);
+
+  // ── Dashboard (when built) ────────────────────────────────────────────────
+  if (fs.existsSync(DASHBOARD_DIR)) {
+    app.use(express.static(DASHBOARD_DIR));
+  }
 
   // ── 404 handler ───────────────────────────────────────────────────────────
   app.use((_req: Request, res: Response) => {
@@ -67,12 +82,4 @@ export function createApp(): Application {
   app.use(errorHandler);
 
   return app;
-}
-
-/** Serves the built dashboard when there is one. Registered ahead of the API. */
-export function createServerApp(): Application {
-  const server = express();
-  if (fs.existsSync(DASHBOARD_DIR)) server.use(express.static(DASHBOARD_DIR));
-  server.use(createApp());
-  return server;
 }

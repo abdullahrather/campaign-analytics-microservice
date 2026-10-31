@@ -4,10 +4,17 @@
  * Integration tests against a real PostgreSQL test database (not mocks).
  * Each test starts from an empty database; Supertest binds an ephemeral port.
  */
+import { execFileSync } from 'child_process';
 import request from 'supertest';
 import bcrypt from 'bcryptjs';
 import { CampaignStatus, Role } from '@prisma/client';
 import { createApp } from '@/app';
+import { authRouter } from '@/modules/auth/auth.routes';
+import { campaignsRouter } from '@/modules/campaigns/campaigns.routes';
+import { deliveryRouter } from '@/modules/delivery/delivery.routes';
+import { isActive } from '@/modules/demo/activity';
+import { runTrafficTick } from '@/modules/demo/traffic';
+import { showsRouter } from '@/modules/shows/shows.routes';
 import {
   addMetrics,
   clearDatabase,
@@ -16,6 +23,8 @@ import {
   createTestUser,
   testPrisma,
 } from './helpers/db';
+
+type Layer = { route?: { path: string; methods: Record<string, boolean> } };
 
 const app = createApp();
 const INGEST_KEY = process.env['INGEST_API_KEY'] as string;
@@ -546,7 +555,147 @@ describe('POST /events', () => {
   });
 });
 
+describe('Guest account', () => {
+  const guest = () => createTestUser({ email: 'guest@test.com', role: Role.GUEST });
+
+  it('can read every campaign', async () => {
+    const advertiser = await createTestUser({ email: 'advertiser@test.com' });
+    await createTestCampaign(advertiser.id, { title: 'Visible' });
+
+    const res = await request(app)
+      .get('/campaigns/analytics')
+      .set('Authorization', await login(await guest()));
+
+    expect(res.body.data.map((c: { title: string }) => c.title)).toEqual(['Visible']);
+  });
+
+  it('cannot create, change or delete campaigns', async () => {
+    const advertiser = await createTestUser({ email: 'advertiser@test.com' });
+    const campaign = await createTestCampaign(advertiser.id);
+    const token = await login(await guest());
+
+    const created = await request(app)
+      .post('/campaigns')
+      .set('Authorization', token)
+      .send(validCampaign);
+    const changed = await request(app)
+      .patch(`/campaigns/${campaign.id}`)
+      .set('Authorization', token)
+      .send({ status: 'PAUSED' });
+    const deleted = await request(app)
+      .delete(`/campaigns/${campaign.id}`)
+      .set('Authorization', token);
+
+    expect([created.status, changed.status, deleted.status]).toEqual([403, 403, 403]);
+    expect(await testPrisma.campaign.count()).toBe(1);
+  });
+});
+
+describe('Demo traffic', () => {
+  it('serves ads to running campaigns and stores the results', async () => {
+    const user = await createTestUser();
+    await createTestShow();
+    await createTestCampaign(user.id);
+
+    const stored = await runTrafficTick();
+
+    expect(stored).toBeGreaterThan(0);
+    const totals = await testPrisma.metric.aggregate({ _sum: { impressions: true } });
+    expect(totals._sum.impressions).toBe(30);
+  });
+
+  it('does nothing without shows', async () => {
+    await expect(runTrafficTick()).resolves.toBe(0);
+  });
+
+  it('treats a request as activity', async () => {
+    const user = await createTestUser();
+    const token = await login(user);
+
+    await request(app).get('/shows').set('Authorization', token);
+
+    expect(isActive()).toBe(true);
+  });
+});
+
+describe('API docs', () => {
+  const routesOf = (router: { stack: Layer[] }, prefix: string): string[] =>
+    router.stack.flatMap(({ route }) =>
+      route
+        ? Object.keys(route.methods).map(
+            (method) => `${method} ${(prefix + route.path).replace(/\/$/, '')}`,
+          )
+        : [],
+    );
+
+  it('serves a valid OpenAPI document', async () => {
+    const res = await request(app).get('/openapi.json');
+
+    expect(res.status).toBe(200);
+    expect(() =>
+      execFileSync(process.execPath, ['scripts/validate-openapi.mjs'], {
+        input: JSON.stringify(res.body),
+        stdio: ['pipe', 'ignore', 'pipe'],
+      }),
+    ).not.toThrow();
+  });
+
+  it('documents every route', async () => {
+    const { body } = await request(app).get('/openapi.json');
+    const documented = Object.entries(body.paths as Record<string, object>).flatMap(
+      ([path, methods]) =>
+        Object.keys(methods).map((method) => `${method} ${path.replace(/{(\w+)}/g, ':$1')}`),
+    );
+
+    const actual = [
+      ...routesOf(authRouter as never, '/auth'),
+      ...routesOf(campaignsRouter as never, '/campaigns'),
+      ...routesOf(showsRouter as never, '/shows'),
+      ...routesOf(deliveryRouter as never, ''),
+    ];
+
+    expect(documented).toEqual(expect.arrayContaining(actual));
+  });
+
+  it('uses the validation rules in request bodies', async () => {
+    const { body } = await request(app).get('/openapi.json');
+    const schema = body.paths['/campaigns'].post.requestBody.content['application/json'].schema;
+
+    expect(schema.required).toContain('budgetCents');
+    expect(schema.properties.startsAt.format).toBe('date-time');
+    expect(schema.properties.targetSlots.items.enum).toContain('MID_ROLL');
+  });
+
+  it('serves Swagger UI under the strict content security policy', async () => {
+    const page = await request(app).get('/docs');
+    const script = await request(app).get('/docs/assets/swagger-ui-bundle.js');
+
+    expect(page.status).toBe(200);
+    expect(page.text).toContain('swagger-ui');
+    expect(page.headers['content-security-policy']).toContain("script-src 'self'");
+    expect(script.status).toBe(200);
+  });
+});
+
 describe('Service basics', () => {
+  it('reports that it is running without using the database', async () => {
+    const res = await request(app).get('/live');
+
+    expect(res.status).toBe(200);
+  });
+
+  it('tells the sign-in page it is not the public demo', async () => {
+    const res = await request(app).get('/auth/options');
+
+    expect(res.body.data).toEqual({ demo: false });
+  });
+
+  it('does not apply the ad server key to other paths', async () => {
+    const res = await request(app).get('/no-such-page');
+
+    expect(res.status).toBe(404);
+  });
+
   it('reports health including the database', async () => {
     const res = await request(app).get('/health');
 

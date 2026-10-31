@@ -16,10 +16,10 @@ Each phase ends with something you can use and show. Phases are built in order, 
 
 Make the project easy to find, understand and try.
 
-- [ ] Add screenshots and a short demo GIF to the README
-- [ ] Publish interactive API docs from an OpenAPI spec
-- [ ] Add a license, contribution guide and changelog
-- [ ] Add automatic version tags and releases
+- [x] Add screenshots and a short demo GIF to the README
+- [x] Publish interactive API docs from an OpenAPI spec
+- [x] Add a license, contribution guide and changelog
+- [x] Add automatic version tags and releases
 - [ ] Deploy a public demo with a read-only guest login and clearly marked fictional data
 
 **Done when:** a stranger can open a link and explore the product in under a minute.

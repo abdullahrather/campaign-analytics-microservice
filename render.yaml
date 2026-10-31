@@ -1,0 +1,23 @@
+# Public demo on Render's free plan. The database is hosted separately on Neon,
+# because Render's free databases expire. Use Neon's direct connection string.
+services:
+  - type: web
+    name: campaign-analytics-demo
+    runtime: docker
+    dockerfilePath: ./Dockerfile.demo
+    region: frankfurt
+    plan: free
+    healthCheckPath: /live
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: INGEST_API_KEY
+        generateValue: true
+      - key: DEMO_MODE
+        value: 'true'
+      - key: SIMULATE_TRAFFIC
+        value: on-demand
+      - key: TRUST_PROXY
+        value: '1'

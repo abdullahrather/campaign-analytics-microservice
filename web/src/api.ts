@@ -152,6 +152,7 @@ export const api = {
     request<Point[]>(withRange('/campaigns/analytics/timeseries', range)),
   campaign: (id: string, range: Range) =>
     request<CampaignDetail>(withRange(`/campaigns/${id}/analytics`, range)),
+  options: () => request<{ demo: boolean }>('/auth/options'),
   shows: () => request<Show[]>('/shows'),
   create: (input: CampaignInput) =>
     request<{ id: string }>('/campaigns', { method: 'POST', body: JSON.stringify(input) }),

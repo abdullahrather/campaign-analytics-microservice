@@ -1,0 +1,25 @@
+# The public demo: keeps the tools needed to refresh its fictional data on startup.
+# Runs the migrations and data refresh first, so it needs a direct database connection.
+FROM node:24-alpine
+
+WORKDIR /app
+
+RUN apk add --no-cache openssl
+
+COPY package*.json ./
+COPY web/package*.json ./web/
+COPY prisma ./prisma/
+
+RUN npm ci && npm ci --prefix web && npx prisma generate
+
+COPY . .
+
+RUN npm run build && npm run build --prefix web
+
+ENV NODE_ENV=production
+
+EXPOSE 3000
+
+USER node
+
+CMD ["sh", "-c", "npx prisma migrate deploy && npx tsx prisma/seed.ts --if-stale && node dist/server.js"]

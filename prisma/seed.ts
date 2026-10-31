@@ -3,10 +3,14 @@
  *
  * Seeds a fictional streaming ad business: users, shows, campaigns in different
  * states, and 30 days of hourly metrics. Run via: npm run db:seed
- * With --if-empty it leaves an existing database alone.
+ * With --if-empty it leaves an existing database alone. With --if-stale it also
+ * refreshes data older than a week, which keeps the public demo's dates current.
+ *
+ * In demo mode only the guest account has a known password.
  */
 import { PrismaClient, Role, CampaignStatus, AdSlot, Device } from '@prisma/client';
 import type { Prisma } from '@prisma/client';
+import { randomBytes } from 'crypto';
 import bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
@@ -50,8 +54,25 @@ const audienceAt = (hour: number): number =>
   0.12 + Math.exp(-((hour - 20.5) ** 2) / 8) + 0.3 * Math.exp(-((hour - 12.5) ** 2) / 6);
 
 async function main(): Promise<void> {
-  if (process.argv.includes('--if-empty') && (await prisma.user.count()) > 0) return;
-  if (process.env['NODE_ENV'] === 'production') throw new Error('Refusing to seed production.');
+  const isDemo = process.env['DEMO_MODE'] === 'true';
+  if (process.env['NODE_ENV'] === 'production' && !isDemo) {
+    throw new Error('Refusing to seed production.');
+  }
+  if (
+    process.argv.includes('--if-empty') &&
+    (await prisma.user.count({ where: { role: Role.GUEST } })) > 0
+  ) {
+    return;
+  }
+  if (process.argv.includes('--if-stale')) {
+    const recent = await prisma.campaign.count({
+      where: { createdAt: { gt: new Date(Date.now() - 7 * DAY) } },
+    });
+    if (recent > 0) return;
+  }
+
+  const password = (demoPassword: string): Promise<string> =>
+    bcrypt.hash(isDemo ? randomBytes(24).toString('hex') : demoPassword, 12);
 
   console.info('Seeding demo data...');
   await prisma.metric.deleteMany();
@@ -62,15 +83,23 @@ async function main(): Promise<void> {
   await prisma.user.create({
     data: {
       email: 'admin@example.com',
-      passwordHash: await bcrypt.hash('admin1234', 12),
+      passwordHash: await password('admin1234'),
       role: Role.ADMIN,
     },
   });
   const advertiser = await prisma.user.create({
     data: {
       email: 'advertiser@example.com',
-      passwordHash: await bcrypt.hash('advert1234', 12),
+      passwordHash: await password('advert1234'),
       role: Role.ADVERTISER,
+    },
+  });
+
+  await prisma.user.create({
+    data: {
+      email: 'guest@example.com',
+      passwordHash: await bcrypt.hash('guest-demo', 12),
+      role: Role.GUEST,
     },
   });
 
@@ -160,8 +189,6 @@ async function main(): Promise<void> {
   }
 
   console.info(`Created ${CAMPAIGNS.length} campaigns and ${rows.length} hourly metric rows.`);
-  console.info('Advertiser login: advertiser@example.com / advert1234');
-  console.info('Admin login:      admin@example.com / admin1234');
 }
 
 main()

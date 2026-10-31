@@ -14,9 +14,7 @@ import { deliveryService } from './delivery.service';
 
 const deliveryRouter = Router();
 
-deliveryRouter.use(requireIngestKey);
-
-deliveryRouter.get('/ad-decision', (req, res, next) => {
+deliveryRouter.get('/ad-decision', requireIngestKey, (req, res, next) => {
   void (async (): Promise<void> => {
     try {
       const query = adDecisionQuerySchema.parse(req.query);
@@ -29,7 +27,7 @@ deliveryRouter.get('/ad-decision', (req, res, next) => {
   })();
 });
 
-deliveryRouter.post('/events', (req, res, next) => {
+deliveryRouter.post('/events', requireIngestKey, (req, res, next) => {
   void (async (): Promise<void> => {
     try {
       const { events } = eventBatchSchema.parse(req.body);

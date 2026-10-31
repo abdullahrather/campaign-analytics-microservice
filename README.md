@@ -1,8 +1,18 @@
 # Campaign Analytics
 
+[![CI](https://github.com/abdullahrather/campaign-analytics-microservice/actions/workflows/ci.yml/badge.svg)](https://github.com/abdullahrather/campaign-analytics-microservice/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
+[![Release](https://img.shields.io/github/v/release/abdullahrather/campaign-analytics-microservice)](https://github.com/abdullahrather/campaign-analytics-microservice/releases)
+
 An ad platform for a streaming service. Advertisers plan campaigns, the platform decides which ad plays in each ad break, every view and click is measured, and a live dashboard shows how each campaign is performing.
 
 Built with Node.js, TypeScript, Express, Prisma and PostgreSQL, with a React dashboard. All brands, shows and traffic in the demo are fictional.
+
+![A walkthrough of the dashboard](./docs/images/demo.gif)
+
+| Campaign detail | Interactive API docs |
+|---|---|
+| ![One campaign with delivery, trends and breakdowns](./docs/images/campaign-dark.png) | ![API docs](./docs/images/api-docs.png) |
 
 ## Run it
 
@@ -13,12 +23,13 @@ npm install
 npm run dev
 ```
 
-Open **http://localhost:5173** and choose **Advertiser demo**. Press `Ctrl+C` to stop.
+Open **http://localhost:5173** and choose **Advertiser demo**. Interactive API docs are at **http://localhost:3000/docs**. Press `Ctrl+C` to stop.
 
 The first run creates a local PostgreSQL in `.data/`, sets up the tables, and adds 30 days of demo data. Your data stays between runs. To start fresh, stop the app and delete `.data/`.
 
 | Account | Email | Password | Sees |
 |---|---|---|---|
+| Guest | `guest@example.com` | `guest-demo` | Everything, read-only |
 | Advertiser | `advertiser@example.com` | `advert1234` | Their own campaigns |
 | Admin | `admin@example.com` | `admin1234` | Every campaign and its owner |
 
@@ -42,7 +53,7 @@ This app is the part in the middle:
  Advertiser ◀─── live charts ────── Analytics
 ```
 
-`npm run dev` also starts a simulator that plays the part of the viewers, so the numbers move while you watch. Run with `SIMULATE=0` to turn it off.
+The app includes demo traffic that plays the part of the viewers, so the numbers move while you watch. Run with `SIMULATE=0` to turn it off.
 
 **Things to try:** create a campaign targeting one country and watch it start delivering within seconds. Pause it and see the numbers stop. Compare Connected TV with Mobile on a campaign's page.
 
@@ -71,11 +82,15 @@ For each ad break, `/ad-decision` keeps campaigns that are active, inside their 
 
 ## API
 
+Interactive docs are at `/docs`, and the raw OpenAPI document is at `/openapi.json`. They are generated from the validation schemas, and a test fails if a route is undocumented.
+
 Dashboard routes need `Authorization: Bearer <token>` from login. Ad server routes need an `x-ingest-key` header.
 
 | Method | Route | Purpose |
 |---|---|---|
+| `GET` | `/live` | Service status, without using the database |
 | `GET` | `/health` | Service and database status |
+| `GET` | `/auth/options` | Whether this is the public demo |
 | `POST` | `/auth/login` | Sign in; limited to 20 attempts per 15 minutes |
 | `GET` | `/campaigns` | List campaigns, with `status`, `page` and `limit` |
 | `POST` | `/campaigns` | Create a campaign |
@@ -93,8 +108,8 @@ Dashboard routes need `Authorization: Bearer <token>` from login. Ad server rout
 
 ```
 prisma/          Database schema, migrations and demo data
-scripts/         Local database, dev startup and traffic simulator
-src/modules/     auth, campaigns, delivery (ad decisions and events), shows
+scripts/         Local database and dev startup
+src/modules/     auth, campaigns, delivery (ad decisions and events), demo, docs, shows
 src/middleware/  Login guard, API key guard, error handling
 tests/           Integration tests against a real PostgreSQL
 web/             The React dashboard
@@ -124,12 +139,20 @@ docker compose up --build
 
 For a real deployment, build the `production` image target and set `DATABASE_URL`, `JWT_SECRET` and `INGEST_API_KEY`. The app refuses to start in production with the placeholder secrets.
 
+## Public demo
+
+`render.yaml` deploys a read-only demo: the app on Render's free plan, and its database on Neon's free plan. Demo mode leaves only the guest account with a known password, runs traffic only while someone is viewing, and refreshes its data when it's more than a week old. The first visit after a quiet period takes about a minute while the app wakes up.
+
 ## Known limits
 
-This is a working demonstration, not a system that has run under real load. [ROADMAP.md](./ROADMAP.md) shows where it's heading.
+This is a working demonstration, not a system that has run under real load.
 
 - Sending the same event batch twice counts it twice, because events have no IDs.
 - Budgets and goals are checked as events arrive, so a campaign can slightly overshoot under heavy traffic.
 - Each ad decision adds up the campaign's delivery. Real ad traffic would need a cache in front of this.
 - `/ad-decision` and `/events` share one API key, which suits a trusted ad server, not code running on viewers' devices.
 - Advertisers can't sign up in the app; accounts come from the seed data.
+
+## Contributing
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md). Released under the [MIT License](./LICENSE).

@@ -12,7 +12,9 @@
  */
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
+import { Role } from '@prisma/client';
 import { env } from '@/config/env';
+import { noteActivity } from '@/modules/demo/activity';
 
 /** Shape of the JWT payload we sign and verify. */
 export interface JwtPayload {
@@ -48,6 +50,7 @@ export const authenticate = (req: Request, res: Response, next: NextFunction): v
       role: payload.role,
     };
 
+    noteActivity();
     next();
   } catch {
     res.status(401).json({
@@ -55,4 +58,14 @@ export const authenticate = (req: Request, res: Response, next: NextFunction): v
       message: 'Invalid or expired token.',
     });
   }
+};
+
+/** Blocks changes from the read-only guest account. Use after `authenticate`. */
+export const requireWriteAccess = (req: Request, res: Response, next: NextFunction): void => {
+  if (req.user?.role === Role.GUEST) {
+    res.status(403).json({ status: 'error', message: 'The demo account is read-only.' });
+    return;
+  }
+
+  next();
 };

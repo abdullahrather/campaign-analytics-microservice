@@ -1,0 +1,98 @@
+/**
+ * src/modules/demo/traffic.ts
+ *
+ * Fictional viewers, so the dashboard has live numbers to show. Each tick,
+ * viewers reach ad breaks, an ad is chosen, and the results are stored as one
+ * batch, exactly as a real player would report them.
+ *
+ * 'always' runs constantly. 'on-demand' runs only while someone is using the
+ * dashboard, so an idle public demo lets its hosting and database sleep.
+ */
+import { prisma } from '@/lib/prisma';
+import { env } from '@/config/env';
+import { deliveryService } from '@/modules/delivery/delivery.service';
+import type { AdEvent } from '@/modules/delivery/delivery.schema';
+import { AdSlot, Device } from '@prisma/client';
+import { isActive } from './activity';
+
+const TICK_MS = 2000;
+const AD_BREAKS_PER_TICK = 30;
+
+const SLOTS = [
+  AdSlot.PRE_ROLL,
+  AdSlot.PRE_ROLL,
+  AdSlot.MID_ROLL,
+  AdSlot.MID_ROLL,
+  AdSlot.MID_ROLL,
+  AdSlot.POST_ROLL,
+];
+const COUNTRIES = ['DE', 'DE', 'DE', 'FR', 'FR', 'IT', 'ES', 'NL', 'AT', 'SE'];
+const DEVICES = [
+  Device.CTV,
+  Device.CTV,
+  Device.CTV,
+  Device.MOBILE,
+  Device.MOBILE,
+  Device.WEB,
+  Device.TABLET,
+];
+const CLICK_RATE: Record<Device, number> = { CTV: 0.003, MOBILE: 0.02, WEB: 0.014, TABLET: 0.011 };
+const COMPLETION_RATE: Record<AdSlot, number> = { PRE_ROLL: 0.78, MID_ROLL: 0.93, POST_ROLL: 0.55 };
+
+const pick = <T>(list: readonly T[]): T => list[Math.floor(Math.random() * list.length)] as T;
+
+async function serveAdBreak(showIds: string[]): Promise<AdEvent[]> {
+  const placement = {
+    showId: pick(showIds),
+    slot: pick(SLOTS),
+    country: pick(COUNTRIES),
+    device: pick(DEVICES),
+  };
+
+  const decision = await deliveryService.decide(placement);
+  if (!decision) return [];
+
+  const event = { ...placement, campaignId: decision.campaignId };
+  const events: AdEvent[] = [{ ...event, type: 'IMPRESSION' }];
+  if (Math.random() < COMPLETION_RATE[placement.slot]) {
+    events.push({ ...event, type: 'COMPLETION' });
+  }
+  if (Math.random() < CLICK_RATE[placement.device]) {
+    events.push({ ...event, type: 'CLICK' });
+  }
+  return events;
+}
+
+/** Plays one round of ad breaks and returns the number of events stored. */
+export async function runTrafficTick(): Promise<number> {
+  const shows = await prisma.show.findMany({ select: { id: true } });
+  if (shows.length === 0) return 0;
+
+  const showIds = shows.map((show) => show.id);
+  const breaks = await Promise.all(
+    Array.from({ length: AD_BREAKS_PER_TICK }, () => serveAdBreak(showIds)),
+  );
+
+  const events = breaks.flat();
+  if (events.length > 0) await deliveryService.ingest(events);
+  return events.length;
+}
+
+export function startTraffic(): void {
+  if (env.SIMULATE_TRAFFIC === 'off') return;
+
+  let running = false;
+  const timer = setInterval(() => {
+    if (running || (env.SIMULATE_TRAFFIC === 'on-demand' && !isActive())) return;
+
+    running = true;
+    runTrafficTick()
+      .catch((error: unknown) => console.warn('Demo traffic:', String(error)))
+      .finally(() => {
+        running = false;
+      });
+  }, TICK_MS);
+  timer.unref();
+
+  console.info(`🎬  Demo traffic: ${env.SIMULATE_TRAFFIC}`);
+}

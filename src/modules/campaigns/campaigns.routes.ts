@@ -7,7 +7,7 @@
  * so Express doesn't interpret "analytics" as an ID parameter.
  */
 import { Router } from 'express';
-import { authenticate } from '@/middleware/authenticate';
+import { authenticate, requireWriteAccess } from '@/middleware/authenticate';
 import { campaignsController } from './campaigns.controller';
 
 const campaignsRouter = Router();
@@ -27,7 +27,7 @@ campaignsRouter.get('/', (req, res, next) => {
   void campaignsController.list(req, res, next);
 });
 
-campaignsRouter.post('/', (req, res, next) => {
+campaignsRouter.post('/', requireWriteAccess, (req, res, next) => {
   void campaignsController.create(req, res, next);
 });
 
@@ -39,11 +39,11 @@ campaignsRouter.get('/:id', (req, res, next) => {
   void campaignsController.get(req, res, next);
 });
 
-campaignsRouter.patch('/:id', (req, res, next) => {
+campaignsRouter.patch('/:id', requireWriteAccess, (req, res, next) => {
   void campaignsController.update(req, res, next);
 });
 
-campaignsRouter.delete('/:id', (req, res, next) => {
+campaignsRouter.delete('/:id', requireWriteAccess, (req, res, next) => {
   void campaignsController.remove(req, res, next);
 });
 

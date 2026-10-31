@@ -3,6 +3,12 @@ import { api, loadSession, setExpiredHandler, type User } from './api';
 import { useTheme } from './hooks';
 import { CampaignPage, Login, Overview } from './pages';
 
+const ROLE_LABELS: Record<string, string> = {
+  ADMIN: 'Admin',
+  ADVERTISER: 'Advertiser',
+  GUEST: 'Guest',
+};
+
 const readRoute = (): string | null =>
   window.location.hash.match(/^#\/campaigns\/(.+)$/)?.[1] ?? null;
 
@@ -34,8 +40,11 @@ const App = () => {
         </a>
         <div className="topbar-actions">
           <span className="muted small who">
-            {user.email} · {user.role === 'ADMIN' ? 'Admin' : 'Advertiser'}
+            {user.email} · {ROLE_LABELS[user.role] ?? user.role}
           </span>
+          <a className="button" href="/docs">
+            API docs
+          </a>
           <button type="button" className="button" onClick={toggle}>
             {theme === 'dark' ? 'Light theme' : 'Dark theme'}
           </button>
@@ -45,10 +54,14 @@ const App = () => {
         </div>
       </nav>
       <main className="page">
+        {user.role === 'GUEST' && (
+          <p className="notice">Read-only demo. All brands, shows and traffic are fictional.</p>
+        )}
         {campaignId ? (
           <CampaignPage
             key={campaignId}
             id={campaignId}
+            user={user}
             onBack={() => {
               window.location.hash = '#/';
             }}

@@ -8,16 +8,18 @@
  *  b) The server startup concerns (port binding, graceful shutdown)
  *     are isolated in one place.
  */
-import { createServerApp } from './app';
+import { createApp } from './app';
 import { env } from '@/config/env';
 import { prisma } from '@/lib/prisma';
+import { startTraffic } from '@/modules/demo/traffic';
 
-const app = createServerApp();
+const app = createApp();
 
 const server = app.listen(env.PORT, () => {
   console.info(`🚀  Server running at http://localhost:${env.PORT}`);
   console.info(`📋  Environment: ${env.NODE_ENV}`);
   console.info(`🏥  Health check: http://localhost:${env.PORT}/health`);
+  startTraffic();
 });
 
 // ── Graceful Shutdown ─────────────────────────────────────────────────────────

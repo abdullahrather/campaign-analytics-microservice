@@ -20,6 +20,15 @@ const loginLimiter = rateLimit({
 });
 
 /**
+ * @route   GET /auth/options
+ * @desc    Tells the sign-in page whether this is the public demo
+ * @access  Public
+ */
+authRouter.get('/options', (_req, res) => {
+  res.status(200).json({ status: 'success', data: { demo: env.DEMO_MODE } });
+});
+
+/**
  * @route   POST /auth/login
  * @desc    Authenticate with email + password, receive a JWT
  * @access  Public

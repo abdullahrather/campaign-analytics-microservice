@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { api, type Campaign, type User } from './api';
 import CampaignForm from './CampaignForm';
 import {
@@ -24,7 +24,8 @@ import {
 } from './format';
 import { rangeFor, useLiveData } from './hooks';
 
-const DEMO_ACCOUNTS = [
+const GUEST = { email: 'guest@example.com', password: 'guest-demo' };
+const LOCAL_ACCOUNTS = [
   { label: 'Advertiser demo', email: 'advertiser@example.com', password: 'advert1234' },
   { label: 'Admin demo', email: 'admin@example.com', password: 'admin1234' },
 ];
@@ -33,6 +34,14 @@ export const Login = ({ onLogin }: { onLogin: (user: User) => void }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [isPublicDemo, setIsPublicDemo] = useState(false);
+
+  useEffect(() => {
+    api
+      .options()
+      .then((options) => setIsPublicDemo(options.demo))
+      .catch(() => setIsPublicDemo(false));
+  }, []);
 
   const signIn = (address: string, secret: string) => {
     setError('');
@@ -81,16 +90,24 @@ export const Login = ({ onLogin }: { onLogin: (user: User) => void }) => {
           Sign in
         </button>
         <div className="demo-accounts">
-          {DEMO_ACCOUNTS.map((account) => (
-            <button
-              key={account.email}
-              type="button"
-              className="button"
-              onClick={() => signIn(account.email, account.password)}
-            >
-              {account.label}
-            </button>
-          ))}
+          <button
+            type="button"
+            className="button"
+            onClick={() => signIn(GUEST.email, GUEST.password)}
+          >
+            Explore as guest
+          </button>
+          {!isPublicDemo &&
+            LOCAL_ACCOUNTS.map((account) => (
+              <button
+                key={account.email}
+                type="button"
+                className="button"
+                onClick={() => signIn(account.email, account.password)}
+              >
+                {account.label}
+              </button>
+            ))}
         </div>
       </form>
     </main>
@@ -159,6 +176,8 @@ const ErrorNote = ({ message }: { message: string }) =>
     </p>
   ) : null;
 
+const canEdit = (user: User): boolean => user.role !== 'GUEST';
+
 export const Overview = ({ user, onOpen }: { user: User; onOpen: (id: string) => void }) => {
   const [rangeId, setRangeId] = useState('7d');
   const [creating, setCreating] = useState(false);
@@ -182,9 +201,11 @@ export const Overview = ({ user, onOpen }: { user: User; onOpen: (id: string) =>
         </div>
         <div className="toolbar">
           <RangePicker value={rangeId} onChange={setRangeId} />
-          <button type="button" className="button primary" onClick={() => setCreating(true)}>
-            New campaign
-          </button>
+          {canEdit(user) && (
+            <button type="button" className="button primary" onClick={() => setCreating(true)}>
+              New campaign
+            </button>
+          )}
         </div>
       </header>
 
@@ -269,7 +290,15 @@ const Delivery = ({ campaign }: { campaign: Campaign }) => (
   </section>
 );
 
-export const CampaignPage = ({ id, onBack }: { id: string; onBack: () => void }) => {
+export const CampaignPage = ({
+  id,
+  user,
+  onBack,
+}: {
+  id: string;
+  user: User;
+  onBack: () => void;
+}) => {
   const [rangeId, setRangeId] = useState('7d');
   const [editing, setEditing] = useState(false);
   const { data, error, refresh } = useLiveData(
@@ -307,21 +336,25 @@ export const CampaignPage = ({ id, onBack }: { id: string; onBack: () => void })
             </div>
             <div className="toolbar">
               <RangePicker value={rangeId} onChange={setRangeId} />
-              {campaign.status !== 'COMPLETED' && (
-                <button
-                  type="button"
-                  className="button"
-                  onClick={() => setStatus(campaign.status === 'ACTIVE' ? 'PAUSED' : 'ACTIVE')}
-                >
-                  {campaign.status === 'ACTIVE' ? 'Pause' : 'Resume'}
-                </button>
+              {canEdit(user) && (
+                <>
+                  {campaign.status !== 'COMPLETED' && (
+                    <button
+                      type="button"
+                      className="button"
+                      onClick={() => setStatus(campaign.status === 'ACTIVE' ? 'PAUSED' : 'ACTIVE')}
+                    >
+                      {campaign.status === 'ACTIVE' ? 'Pause' : 'Resume'}
+                    </button>
+                  )}
+                  <button type="button" className="button" onClick={() => setEditing(true)}>
+                    Edit
+                  </button>
+                  <button type="button" className="button danger" onClick={remove}>
+                    Delete
+                  </button>
+                </>
               )}
-              <button type="button" className="button" onClick={() => setEditing(true)}>
-                Edit
-              </button>
-              <button type="button" className="button danger" onClick={remove}>
-                Delete
-              </button>
             </div>
           </header>
 

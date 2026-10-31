@@ -29,6 +29,9 @@ const envSchema = z.object({
   INGEST_API_KEY: secret('INGEST_API_KEY', 16),
   CORS_ORIGIN: z.string().default(''),
   LOGIN_RATE_LIMIT: z.coerce.number().int().positive().default(20),
+  DEMO_MODE: z.stringbool().default(false),
+  SIMULATE_TRAFFIC: z.enum(['off', 'on-demand', 'always']).default('off'),
+  TRUST_PROXY: z.coerce.number().int().nonnegative().default(0),
 });
 
 const parsed = envSchema.safeParse(process.env);

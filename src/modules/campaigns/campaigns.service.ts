@@ -5,7 +5,7 @@
  *
  * Every analytics method runs as one SQL statement over the hourly rollup table,
  * so the database does the aggregation and the number of campaigns never adds
- * round-trips (no N+1). Advertisers see their own campaigns; admins see all.
+ * round-trips (no N+1). Advertisers see their own campaigns; admins and guests see all.
  */
 import { Prisma, Role, type Campaign } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
@@ -88,8 +88,9 @@ interface TotalsRow {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+// Admins manage everything; the guest account browses everything read-only.
 const ownerFilter = (actor: Actor): string | undefined =>
-  actor.role === Role.ADMIN ? undefined : actor.sub;
+  actor.role === Role.ADMIN || actor.role === Role.GUEST ? undefined : actor.sub;
 
 const ownerSql = (actor: Actor): Prisma.Sql => {
   const owner = ownerFilter(actor);

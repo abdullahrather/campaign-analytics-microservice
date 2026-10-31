@@ -9,12 +9,15 @@ import request from 'supertest';
 import bcrypt from 'bcryptjs';
 import { CampaignStatus, Role } from '@prisma/client';
 import { createApp } from '@/app';
+import { accountRouter } from '@/modules/account/account.routes';
+import { adminRouter } from '@/modules/admin/admin.routes';
 import { authRouter } from '@/modules/auth/auth.routes';
 import { campaignsRouter } from '@/modules/campaigns/campaigns.routes';
 import { deliveryRouter } from '@/modules/delivery/delivery.routes';
 import { isActive } from '@/modules/demo/activity';
 import { runTrafficTick } from '@/modules/demo/traffic';
 import { showsRouter } from '@/modules/shows/shows.routes';
+import { invitationsRouter, teamRouter } from '@/modules/team/team.routes';
 import {
   addMetrics,
   clearDatabase,
@@ -204,14 +207,13 @@ describe('GET /campaigns/:id/analytics', () => {
 });
 
 describe('POST /auth/login', () => {
-  it('returns a JWT and the user', async () => {
+  it('returns a JWT', async () => {
     const user = await createTestUser({ email: 'login@test.com', password: 'MyPass1234!' });
 
     const res = await request(app).post('/auth/login').send(user);
 
     expect(res.status).toBe(200);
     expect(res.body.data.token.split('.')).toHaveLength(3);
-    expect(res.body.data.user).toMatchObject({ email: 'login@test.com', role: 'ADVERTISER' });
   });
 
   it('accepts an email with different casing', async () => {
@@ -649,6 +651,10 @@ describe('API docs', () => {
 
     const actual = [
       ...routesOf(authRouter as never, '/auth'),
+      ...routesOf(accountRouter as never, '/account'),
+      ...routesOf(teamRouter as never, '/team'),
+      ...routesOf(invitationsRouter as never, '/invitations'),
+      ...routesOf(adminRouter as never, '/admin'),
       ...routesOf(campaignsRouter as never, '/campaigns'),
       ...routesOf(showsRouter as never, '/shows'),
       ...routesOf(deliveryRouter as never, ''),
@@ -687,7 +693,7 @@ describe('Service basics', () => {
   it('tells the sign-in page it is not the public demo', async () => {
     const res = await request(app).get('/auth/options');
 
-    expect(res.body.data).toEqual({ demo: false });
+    expect(res.body.data).toEqual({ demo: false, signUp: true, localMailbox: true });
   });
 
   it('does not apply the ad server key to other paths', async () => {

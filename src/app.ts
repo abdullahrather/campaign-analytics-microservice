@@ -11,15 +11,20 @@
 import fs from 'fs';
 import path from 'path';
 import express, { type Application, type Request, type Response } from 'express';
+import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import cors from 'cors';
 import morgan from 'morgan';
 
+import { accountRouter } from '@/modules/account/account.routes';
+import { adminRouter } from '@/modules/admin/admin.routes';
 import { authRouter } from '@/modules/auth/auth.routes';
 import { campaignsRouter } from '@/modules/campaigns/campaigns.routes';
 import { deliveryRouter } from '@/modules/delivery/delivery.routes';
+import { devRouter } from '@/modules/dev/dev.routes';
 import { docsRouter } from '@/modules/docs/docs.routes';
 import { showsRouter } from '@/modules/shows/shows.routes';
+import { invitationsRouter, teamRouter } from '@/modules/team/team.routes';
 import { errorHandler } from '@/middleware/errorHandler';
 import { prisma } from '@/lib/prisma';
 import { env } from '@/config/env';
@@ -39,10 +44,11 @@ export function createApp(): Application {
     }),
   );
   const origins = env.CORS_ORIGIN.split(',').filter(Boolean);
-  app.use(cors({ origin: origins.length > 0 ? origins : false }));
+  app.use(cors({ origin: origins.length > 0 ? origins : false, credentials: true }));
 
   // ── Body parsing ──────────────────────────────────────────────────────────
   app.use(express.json({ limit: '1mb' }));
+  app.use(cookieParser());
 
   // ── Logging ───────────────────────────────────────────────────────────────
   if (env.NODE_ENV === 'production') {
@@ -63,7 +69,12 @@ export function createApp(): Application {
 
   // ── API routes ────────────────────────────────────────────────────────────
   app.use(docsRouter);
+  app.use(devRouter);
   app.use('/auth', authRouter);
+  app.use('/account', accountRouter);
+  app.use('/team', teamRouter);
+  app.use('/invitations', invitationsRouter);
+  app.use('/admin', adminRouter);
   app.use('/campaigns', campaignsRouter);
   app.use('/shows', showsRouter);
   app.use(deliveryRouter);

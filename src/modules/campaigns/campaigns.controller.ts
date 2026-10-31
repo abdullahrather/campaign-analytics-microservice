@@ -5,19 +5,15 @@
  * Controllers must not contain business logic.
  */
 import { Request, Response, NextFunction } from 'express';
-import { AppError } from '@/middleware/errorHandler';
+import { actorOf, contextOf } from '@/lib/http';
+import { auditService } from '@/modules/audit/audit.service';
 import {
   createCampaignSchema,
   dateRangeSchema,
   listCampaignsQuerySchema,
   updateCampaignSchema,
 } from './campaigns.schema';
-import { campaignsService, type Actor } from './campaigns.service';
-
-const actorOf = (req: Request): Actor => {
-  if (!req.user) throw new AppError(401, 'Unauthenticated.');
-  return req.user;
-};
+import { campaignsService } from './campaigns.service';
 
 const idOf = (req: Request): string => req.params['id'] as string;
 
@@ -38,7 +34,18 @@ export class CampaignsController {
   async create(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const dto = createCampaignSchema.parse(req.body);
-      const campaign = await campaignsService.createCampaign(actorOf(req), dto);
+      const actor = actorOf(req);
+      const campaign = await campaignsService.createCampaign(actor, dto);
+
+      await auditService.record({
+        action: 'campaign.created',
+        actorId: actor.sub,
+        organisationId: campaign.organisationId,
+        targetType: 'campaign',
+        targetId: campaign.id,
+        details: { title: campaign.title },
+        ipAddress: contextOf(req).ipAddress,
+      });
 
       res.status(201).json({ status: 'success', data: campaign });
     } catch (error) {
@@ -61,7 +68,18 @@ export class CampaignsController {
   async update(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const dto = updateCampaignSchema.parse(req.body);
-      const campaign = await campaignsService.updateCampaign(idOf(req), actorOf(req), dto);
+      const actor = actorOf(req);
+      const campaign = await campaignsService.updateCampaign(idOf(req), actor, dto);
+
+      await auditService.record({
+        action: 'campaign.updated',
+        actorId: actor.sub,
+        organisationId: campaign.organisationId,
+        targetType: 'campaign',
+        targetId: campaign.id,
+        details: { title: campaign.title, fields: Object.keys(dto) },
+        ipAddress: contextOf(req).ipAddress,
+      });
 
       res.status(200).json({ status: 'success', data: campaign });
     } catch (error) {
@@ -72,7 +90,18 @@ export class CampaignsController {
   /** DELETE /campaigns/:id */
   async remove(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      await campaignsService.deleteCampaign(idOf(req), actorOf(req));
+      const actor = actorOf(req);
+      const campaign = await campaignsService.deleteCampaign(idOf(req), actor);
+
+      await auditService.record({
+        action: 'campaign.deleted',
+        actorId: actor.sub,
+        organisationId: campaign.organisationId,
+        targetType: 'campaign',
+        targetId: campaign.id,
+        details: { title: campaign.title },
+        ipAddress: contextOf(req).ipAddress,
+      });
 
       res.status(204).end();
     } catch (error) {

@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Release](https://img.shields.io/github/v/release/abdullahrather/campaign-analytics-microservice)](https://github.com/abdullahrather/campaign-analytics-microservice/releases)
 
-An ad platform for a streaming service. Advertisers plan campaigns, the platform decides which ad plays in each ad break, every view and click is measured, and a live dashboard shows how each campaign is performing.
+An ad platform for a streaming service. Companies plan campaigns as a team, the platform decides which ad plays in each ad break, every view and click is measured, and a live dashboard shows how each campaign is performing.
 
 Built with Node.js, TypeScript, Express, Prisma and PostgreSQL, with a React dashboard. All brands, shows and traffic in the demo are fictional.
 
@@ -13,6 +13,10 @@ Built with Node.js, TypeScript, Express, Prisma and PostgreSQL, with a React das
 | Campaign detail | Interactive API docs |
 |---|---|
 | ![One campaign with delivery, trends and breakdowns](./docs/images/campaign-dark.png) | ![API docs](./docs/images/api-docs.png) |
+
+| Team management | Admin console |
+|---|---|
+| ![Team members, roles and invitations](./docs/images/team.png) | ![Users, organisations and platform activity](./docs/images/admin.png) |
 
 ## Run it
 
@@ -23,15 +27,18 @@ npm install
 npm run dev
 ```
 
-Open **http://localhost:5173** and choose **Advertiser demo**. Interactive API docs are at **http://localhost:3000/docs**. Press `Ctrl+C` to stop.
+Open **http://localhost:5173** and choose a demo account. Interactive API docs are at **http://localhost:3000/docs**. Press `Ctrl+C` to stop.
 
 The first run creates a local PostgreSQL in `.data/`, sets up the tables, and adds 30 days of demo data. Your data stays between runs. To start fresh, stop the app and delete `.data/`.
 
 | Account | Email | Password | Sees |
 |---|---|---|---|
+| Owner | `advertiser@example.com` | `advert1234` | Brightline Media: campaigns and team |
+| Manager | `manager@example.com` | `manager1234` | Brightline Media: campaigns and activity |
+| Analyst | `analyst@example.com` | `analyst1234` | Brightline Media: read-only |
+| Other company | `rival@example.com` | `rival1234` | Casa Creative, kept apart from Brightline |
+| Admin | `admin@example.com` | `admin1234` | Everything, plus the admin console |
 | Guest | `guest@example.com` | `guest-demo` | Everything, read-only |
-| Advertiser | `advertiser@example.com` | `advert1234` | Their own campaigns |
-| Admin | `admin@example.com` | `admin1234` | Every campaign and its owner |
 
 ## What it does
 
@@ -70,9 +77,31 @@ The app includes demo traffic that plays the part of the viewers, so the numbers
 | **Impression goal** | The number of impressions the advertiser bought. |
 | **Pacing** | Delivery so far compared with an even schedule. Behind means the campaign may miss its goal. |
 
+### Accounts and teams
+
+Each company is an organisation with its own private campaigns and team. A person can belong to several and switch between them.
+
+| Role | Can do |
+|---|---|
+| **Owner** | Everything below, plus invite people, change roles and remove members |
+| **Manager** | Create and change campaigns, and see team activity |
+| **Analyst** | View campaigns and reports |
+
+The platform also has a **sign-up flow** with email confirmation, **password reset**, **two-factor login** with an authenticator app and recovery codes, a list of **signed-in devices**, an **activity log** of who changed what, and an **admin console** for suspending people or organisations.
+
+Emails appear in the **local mailbox** at `/#/mailbox`, so all of this works with no mail server. To send real email, set `SMTP_URL` in `.env`.
+
 ### How an ad gets chosen
 
 For each ad break, `/ad-decision` keeps campaigns that are active, inside their dates, under their goal and budget, and matching the country, device, slot and show genre. It then picks the one furthest behind schedule, with the higher CPM winning ties. A campaign is marked completed when it reaches its goal or budget, or passes its end date.
+
+## How it stays secure
+
+- **Passwords** are hashed with bcrypt. Sign-in, sign-up and password reset respond the same way whether or not an account exists.
+- **Sessions** use a 15-minute access token held in memory, and a rotating refresh token in an httpOnly cookie. Reusing an old refresh token ends the session.
+- **Two-factor sign-in** locks for 15 minutes after five wrong codes, counted per account, and emails the owner.
+- **Permissions** are checked against the database on every request, so sign-outs, suspensions and role changes apply immediately.
+- **Secrets** are never stored in plain text: email links and recovery codes are hashed, and two-factor secrets are encrypted.
 
 ## How it stays fast
 
@@ -90,8 +119,16 @@ Dashboard routes need `Authorization: Bearer <token>` from login. Ad server rout
 |---|---|---|
 | `GET` | `/live` | Service status, without using the database |
 | `GET` | `/health` | Service and database status |
-| `GET` | `/auth/options` | Whether this is the public demo |
+| `GET` | `/auth/options` | Which sign-in options apply here |
+| `POST` | `/auth/register` | Create an account and organisation |
 | `POST` | `/auth/login` | Sign in; limited to 20 attempts per 15 minutes |
+| `POST` | `/auth/two-factor` | Finish signing in with a code |
+| `POST` | `/auth/refresh` | Replace an expired access token |
+| `POST` | `/auth/forgot-password` | Send a reset link |
+| `GET` | `/auth/me` | Your profile and organisations |
+| | `/account/*` | Password, devices and two-factor settings |
+| | `/team/*` | Members, invitations and activity |
+| | `/admin/*` | The admin console |
 | `GET` | `/campaigns` | List campaigns, with `status`, `page` and `limit` |
 | `POST` | `/campaigns` | Create a campaign |
 | `GET` | `/campaigns/:id` | Read a campaign |
@@ -109,8 +146,8 @@ Dashboard routes need `Authorization: Bearer <token>` from login. Ad server rout
 ```
 prisma/          Database schema, migrations and demo data
 scripts/         Local database and dev startup
-src/modules/     auth, campaigns, delivery (ad decisions and events), demo, docs, shows
-src/middleware/  Login guard, API key guard, error handling
+src/modules/     account, admin, audit, auth, campaigns, delivery, demo, dev, docs, shows, team
+src/middleware/  Sign-in and permission guards, API key guard, error handling
 tests/           Integration tests against a real PostgreSQL
 web/             The React dashboard
 ```
@@ -151,7 +188,7 @@ This is a working demonstration, not a system that has run under real load.
 - Budgets and goals are checked as events arrive, so a campaign can slightly overshoot under heavy traffic.
 - Each ad decision adds up the campaign's delivery. Real ad traffic would need a cache in front of this.
 - `/ad-decision` and `/events` share one API key, which suits a trusted ad server, not code running on viewers' devices.
-- Advertisers can't sign up in the app; accounts come from the seed data.
+- Sign-ups and invitations need `SMTP_URL` for real email; without it, messages stay in the local mailbox.
 
 ## Contributing
 

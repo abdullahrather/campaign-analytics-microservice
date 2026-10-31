@@ -6,6 +6,19 @@ const api = `http://localhost:${process.env.PORT ?? 3000}`;
 export default defineConfig({
   plugins: [react()],
   server: {
-    proxy: { '/auth': api, '/campaigns': api, '/shows': api, '/docs': api, '/openapi.json': api },
+    proxy: Object.fromEntries(
+      [
+        '/auth',
+        '/account',
+        '/admin',
+        '/campaigns',
+        '/dev',
+        '/docs',
+        '/invitations',
+        '/openapi.json',
+        '/shows',
+        '/team',
+      ].map((path) => [path, api]),
+    ),
   },
 });

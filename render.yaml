@@ -15,6 +15,8 @@ services:
         generateValue: true
       - key: INGEST_API_KEY
         generateValue: true
+      - key: ENCRYPTION_KEY
+        generateValue: true
       - key: DEMO_MODE
         value: 'true'
       - key: SIMULATE_TRAFFIC

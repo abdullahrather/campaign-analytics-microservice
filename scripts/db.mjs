@@ -9,18 +9,25 @@ import EmbeddedPostgres from 'embedded-postgres';
 
 export const ROOT = path.resolve(import.meta.dirname, '..');
 
-/** Creates .env from the example on first run, with fresh secrets. */
+const GENERATED_SECRETS = { JWT_SECRET: 48, INGEST_API_KEY: 24, ENCRYPTION_KEY: 32 };
+
+/** Creates .env from the example on first run, and fills in any missing secret. */
 export const ensureEnv = () => {
   const target = path.join(ROOT, '.env');
-  if (!fs.existsSync(target)) {
-    const secret = (bytes) => crypto.randomBytes(bytes).toString('hex');
-    const content = fs
-      .readFileSync(path.join(ROOT, '.env.example'), 'utf8')
-      .replace(/^JWT_SECRET=.*$/m, `JWT_SECRET="${secret(48)}"`)
-      .replace(/^INGEST_API_KEY=.*$/m, `INGEST_API_KEY="${secret(24)}"`);
-    fs.writeFileSync(target, content);
-    console.info('Created .env with generated secrets.');
+  const isNew = !fs.existsSync(target);
+  let content = fs.readFileSync(isNew ? path.join(ROOT, '.env.example') : target, 'utf8');
+
+  for (const [name, bytes] of Object.entries(GENERATED_SECRETS)) {
+    const value = `${name}="${crypto.randomBytes(bytes).toString('hex')}"`;
+    const line = new RegExp(`^${name}=.*$`, 'm');
+    const existing = content.match(line)?.[0];
+
+    if (!existing) content = `${content.trimEnd()}\n${value}\n`;
+    else if (existing.includes('change-me')) content = content.replace(line, () => value);
   }
+
+  fs.writeFileSync(target, content);
+  if (isNew) console.info('Created .env with generated secrets.');
   dotenv.config({ path: target, quiet: true });
 };
 

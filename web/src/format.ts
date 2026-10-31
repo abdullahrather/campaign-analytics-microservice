@@ -16,11 +16,31 @@ export const formatPercent = (value: number, digits = 1): string =>
 export const formatDate = (value: string): string =>
   new Date(value).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 
+export const formatDateTime = (value: string): string =>
+  new Date(value).toLocaleString('en-GB', {
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+
 export const formatTick = (value: string, hourly: boolean): string =>
   new Date(value).toLocaleString(
     'en-GB',
     hourly ? { hour: '2-digit', minute: '2-digit' } : { day: 'numeric', month: 'short' },
   );
+
+export const ROLE_NAMES: Record<string, string> = {
+  OWNER: 'Owner',
+  MANAGER: 'Manager',
+  ANALYST: 'Analyst',
+};
+
+export const ROLE_DESCRIPTIONS: Record<string, string> = {
+  OWNER: 'Owners manage the team and campaigns.',
+  MANAGER: 'Managers run campaigns and can see team activity.',
+  ANALYST: 'Analysts can view campaigns and reports, but not change them.',
+};
 
 export const SLOT_LABELS: Record<string, string> = {
   PRE_ROLL: 'Pre-roll',

@@ -5,9 +5,10 @@
  *
  * Every analytics method runs as one SQL statement over the hourly rollup table,
  * so the database does the aggregation and the number of campaigns never adds
- * round-trips (no N+1). Advertisers see their own campaigns; admins and guests see all.
+ * round-trips (no N+1). People see their active organisation; admins and guests see all.
  */
-import { Prisma, Role, type Campaign } from '@prisma/client';
+import { Prisma, type Campaign } from '@prisma/client';
+import { seesAllOrganisations, type Actor } from '@/lib/actor';
 import { prisma } from '@/lib/prisma';
 import { AppError } from '@/middleware/errorHandler';
 import type {
@@ -21,11 +22,6 @@ const HOURLY_RANGE_LIMIT_MS = 3 * 86_400_000;
 const PACING_TOLERANCE = 0.1;
 
 // ── Typed return shapes ───────────────────────────────────────────────────────
-
-export interface Actor {
-  sub: string;
-  role: string;
-}
 
 export interface PaginatedCampaigns {
   data: Campaign[];
@@ -88,13 +84,17 @@ interface TotalsRow {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-// Admins manage everything; the guest account browses everything read-only.
-const ownerFilter = (actor: Actor): string | undefined =>
-  actor.role === Role.ADMIN || actor.role === Role.GUEST ? undefined : actor.sub;
+// A person with no active organisation matches nothing.
+const NO_ORGANISATION = '';
 
-const ownerSql = (actor: Actor): Prisma.Sql => {
-  const owner = ownerFilter(actor);
-  return owner ? Prisma.sql`c.user_id = ${owner}` : Prisma.sql`TRUE`;
+const organisationFilter = (actor: Actor): string | undefined =>
+  seesAllOrganisations(actor) ? undefined : (actor.organisationId ?? NO_ORGANISATION);
+
+const organisationSql = (actor: Actor): Prisma.Sql => {
+  const organisationId = organisationFilter(actor);
+  return organisationId === undefined
+    ? Prisma.sql`TRUE`
+    : Prisma.sql`c.organisation_id = ${organisationId}`;
 };
 
 const ratio = (part: number, whole: number): number => (whole > 0 ? part / whole : 0);
@@ -140,9 +140,9 @@ export class CampaignsService {
    * Supports optional status filtering.
    */
   async listCampaigns(actor: Actor, query: ListCampaignsQuery): Promise<PaginatedCampaigns> {
-    const owner = ownerFilter(actor);
+    const organisationId = organisationFilter(actor);
     const where: Prisma.CampaignWhereInput = {
-      ...(owner ? { userId: owner } : {}),
+      ...(organisationId === undefined ? {} : { organisationId }),
       ...(query.status ? { status: query.status } : {}),
     };
 
@@ -170,7 +170,11 @@ export class CampaignsService {
   }
 
   async createCampaign(actor: Actor, dto: CreateCampaignDto): Promise<Campaign> {
-    return prisma.campaign.create({ data: { ...dto, userId: actor.sub } });
+    if (!actor.organisationId) throw new AppError(409, 'Choose an organisation first.');
+
+    return prisma.campaign.create({
+      data: { ...dto, userId: actor.sub, organisationId: actor.organisationId },
+    });
   }
 
   async updateCampaign(id: string, actor: Actor, dto: UpdateCampaignDto): Promise<Campaign> {
@@ -191,9 +195,9 @@ export class CampaignsService {
     });
   }
 
-  async deleteCampaign(id: string, actor: Actor): Promise<void> {
+  async deleteCampaign(id: string, actor: Actor): Promise<Campaign> {
     await this.findOneOrFail(id, actor);
-    await prisma.campaign.delete({ where: { id } });
+    return prisma.campaign.delete({ where: { id } });
   }
 
   /**
@@ -212,6 +216,7 @@ export class CampaignsService {
     const rows = await prisma.$queryRaw<CampaignAnalyticsRow[]>(Prisma.sql`
       SELECT
         c.id,
+        c.organisation_id AS "organisationId",
         c.user_id AS "userId",
         c.title,
         c.advertiser,
@@ -235,7 +240,7 @@ export class CampaignsService {
       FROM campaigns c
       JOIN users u ON u.id = c.user_id
       LEFT JOIN metrics m ON m.campaign_id = c.id
-      WHERE ${ownerSql(actor)} AND ${campaignFilter}
+      WHERE ${organisationSql(actor)} AND ${campaignFilter}
       GROUP BY c.id, u.email
       ORDER BY c.created_at DESC
     `);
@@ -278,7 +283,7 @@ export class CampaignsService {
       FROM metrics m
       JOIN campaigns c ON c.id = m.campaign_id
       WHERE m.bucket >= ${range.from} AND m.bucket < ${range.to}
-        AND ${ownerSql(actor)} AND ${campaignFilter}
+        AND ${organisationSql(actor)} AND ${campaignFilter}
       GROUP BY 1
       ORDER BY 1
     `);
@@ -321,9 +326,9 @@ export class CampaignsService {
    * Throws 404 if not found or if it belongs to another advertiser.
    */
   async findOneOrFail(campaignId: string, actor: Actor): Promise<Campaign> {
-    const owner = ownerFilter(actor);
+    const organisationId = organisationFilter(actor);
     const campaign = await prisma.campaign.findFirst({
-      where: { id: campaignId, ...(owner ? { userId: owner } : {}) },
+      where: { id: campaignId, ...(organisationId === undefined ? {} : { organisationId }) },
     });
 
     if (!campaign) {

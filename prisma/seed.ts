@@ -8,7 +8,14 @@
  *
  * In demo mode only the guest account has a known password.
  */
-import { PrismaClient, Role, CampaignStatus, AdSlot, Device } from '@prisma/client';
+import {
+  PrismaClient,
+  Role,
+  OrganisationRole,
+  CampaignStatus,
+  AdSlot,
+  Device,
+} from '@prisma/client';
 import type { Prisma } from '@prisma/client';
 import { randomBytes } from 'crypto';
 import bcrypt from 'bcryptjs';
@@ -34,13 +41,106 @@ const SHOWS = [
 
 // Fictional advertisers. Delivery is how far along the impression goal the seed leaves them.
 const CAMPAIGNS = [
-  { title: 'Winter Coats Launch', advertiser: 'Nordkap Outdoor', cpm: 1800, budget: 9_000_000, goal: 5_000_000, from: -20, to: 25, delivery: 0.44, countries: ['DE', 'AT', 'SE'], genres: [], devices: [], slots: [] },
-  { title: 'Electric City Car', advertiser: 'Volta Motors', cpm: 3200, budget: 19_200_000, goal: 6_000_000, from: -14, to: 16, delivery: 0.3, countries: ['DE', 'FR', 'NL'], genres: ['Drama', 'Crime', 'Documentary'], devices: [Device.CTV], slots: [AdSlot.PRE_ROLL, AdSlot.MID_ROLL] },
-  { title: 'Matchday Fan Bundle', advertiser: 'Goal Telecom', cpm: 2600, budget: 10_400_000, goal: 4_000_000, from: -10, to: 20, delivery: 0.42, countries: [], genres: ['Sports'], devices: [], slots: [AdSlot.MID_ROLL] },
-  { title: 'Family Breakfast', advertiser: 'Sonnenhof Foods', cpm: 1400, budget: 4_200_000, goal: 3_000_000, from: -25, to: 5, delivery: 0.6, countries: ['DE', 'AT'], genres: ['Kids', 'Reality'], devices: [], slots: [] },
-  { title: 'Mediterranean Escapes', advertiser: 'Azul Travel', cpm: 2200, budget: 6_600_000, goal: 3_000_000, from: -9, to: 40, delivery: 0.22, countries: ['IT', 'ES', 'FR'], genres: [], devices: [], slots: [AdSlot.PRE_ROLL] },
-  { title: 'Spring Teaser', advertiser: 'Nordkap Outdoor', cpm: 1600, budget: 3_200_000, goal: 2_000_000, from: -6, to: 30, delivery: 0.1, countries: [], genres: [], devices: [], slots: [], status: CampaignStatus.PAUSED },
-  { title: 'Autumn Sale', advertiser: 'Casa Mobili', cpm: 1500, budget: 3_000_000, goal: 2_000_000, from: -30, to: -4, delivery: 1, countries: ['IT', 'ES'], genres: [], devices: [], slots: [], status: CampaignStatus.COMPLETED },
+  {
+    title: 'Winter Coats Launch',
+    advertiser: 'Nordkap Outdoor',
+    cpm: 1800,
+    budget: 9_000_000,
+    goal: 5_000_000,
+    from: -20,
+    to: 25,
+    delivery: 0.44,
+    countries: ['DE', 'AT', 'SE'],
+    genres: [],
+    devices: [],
+    slots: [],
+  },
+  {
+    title: 'Electric City Car',
+    advertiser: 'Volta Motors',
+    cpm: 3200,
+    budget: 19_200_000,
+    goal: 6_000_000,
+    from: -14,
+    to: 16,
+    delivery: 0.3,
+    countries: ['DE', 'FR', 'NL'],
+    genres: ['Drama', 'Crime', 'Documentary'],
+    devices: [Device.CTV],
+    slots: [AdSlot.PRE_ROLL, AdSlot.MID_ROLL],
+  },
+  {
+    title: 'Matchday Fan Bundle',
+    advertiser: 'Goal Telecom',
+    cpm: 2600,
+    budget: 10_400_000,
+    goal: 4_000_000,
+    from: -10,
+    to: 20,
+    delivery: 0.42,
+    countries: [],
+    genres: ['Sports'],
+    devices: [],
+    slots: [AdSlot.MID_ROLL],
+  },
+  {
+    title: 'Family Breakfast',
+    advertiser: 'Sonnenhof Foods',
+    cpm: 1400,
+    budget: 4_200_000,
+    goal: 3_000_000,
+    from: -25,
+    to: 5,
+    delivery: 0.6,
+    countries: ['DE', 'AT'],
+    genres: ['Kids', 'Reality'],
+    devices: [],
+    slots: [],
+  },
+  {
+    title: 'Mediterranean Escapes',
+    advertiser: 'Azul Travel',
+    cpm: 2200,
+    budget: 6_600_000,
+    goal: 3_000_000,
+    from: -9,
+    to: 40,
+    delivery: 0.22,
+    countries: ['IT', 'ES', 'FR'],
+    genres: [],
+    devices: [],
+    slots: [AdSlot.PRE_ROLL],
+  },
+  {
+    title: 'Spring Teaser',
+    advertiser: 'Nordkap Outdoor',
+    cpm: 1600,
+    budget: 3_200_000,
+    goal: 2_000_000,
+    from: -6,
+    to: 30,
+    delivery: 0.1,
+    countries: [],
+    genres: [],
+    devices: [],
+    slots: [],
+    status: CampaignStatus.PAUSED,
+  },
+  {
+    title: 'Autumn Sale',
+    advertiser: 'Casa Mobili',
+    cpm: 1500,
+    budget: 3_000_000,
+    goal: 2_000_000,
+    from: -30,
+    to: -4,
+    delivery: 1,
+    countries: ['IT', 'ES'],
+    genres: [],
+    devices: [],
+    slots: [],
+    status: CampaignStatus.COMPLETED,
+  },
 ];
 
 /** Small seeded generator, so every seed produces the same demo story. */
@@ -60,7 +160,7 @@ async function main(): Promise<void> {
   }
   if (
     process.argv.includes('--if-empty') &&
-    (await prisma.user.count({ where: { role: Role.GUEST } })) > 0
+    (await prisma.user.count({ where: { email: 'analyst@example.com' } })) > 0
   ) {
     return;
   }
@@ -78,28 +178,67 @@ async function main(): Promise<void> {
   await prisma.metric.deleteMany();
   await prisma.campaign.deleteMany();
   await prisma.show.deleteMany();
+  await prisma.organisation.deleteMany();
   await prisma.user.deleteMany();
+  await prisma.auditLog.deleteMany();
+  await prisma.capturedEmail.deleteMany();
 
-  await prisma.user.create({
+  const verified = new Date();
+
+  const person = async (
+    email: string,
+    name: string,
+    demoPassword: string,
+    role: Role = Role.ADVERTISER,
+  ): Promise<{ id: string }> =>
+    prisma.user.create({
+      data: {
+        email,
+        name,
+        role,
+        passwordHash: await password(demoPassword),
+        emailVerifiedAt: verified,
+      },
+    });
+
+  const owner = await person('advertiser@example.com', 'Olivia Owner', 'advert1234');
+  const manager = await person('manager@example.com', 'Max Manager', 'manager1234');
+  const analyst = await person('analyst@example.com', 'Anna Analyst', 'analyst1234');
+  const rival = await person('rival@example.com', 'Rico Rival', 'rival1234');
+  const admin = await person('admin@example.com', 'Ada Admin', 'admin1234', Role.ADMIN);
+
+  const brightline = await prisma.organisation.create({
     data: {
-      email: 'admin@example.com',
-      passwordHash: await password('admin1234'),
-      role: Role.ADMIN,
+      name: 'Brightline Media',
+      memberships: {
+        create: [
+          { userId: owner.id, role: OrganisationRole.OWNER },
+          { userId: manager.id, role: OrganisationRole.MANAGER },
+          { userId: analyst.id, role: OrganisationRole.ANALYST },
+        ],
+      },
     },
   });
-  const advertiser = await prisma.user.create({
+  const casa = await prisma.organisation.create({
     data: {
-      email: 'advertiser@example.com',
-      passwordHash: await password('advert1234'),
-      role: Role.ADVERTISER,
+      name: 'Casa Creative',
+      memberships: { create: { userId: rival.id, role: OrganisationRole.OWNER } },
+    },
+  });
+  await prisma.organisation.create({
+    data: {
+      name: 'Platform Team',
+      memberships: { create: { userId: admin.id, role: OrganisationRole.OWNER } },
     },
   });
 
   await prisma.user.create({
     data: {
       email: 'guest@example.com',
+      name: 'Guest',
       passwordHash: await bcrypt.hash('guest-demo', 12),
       role: Role.GUEST,
+      emailVerifiedAt: verified,
     },
   });
 
@@ -116,7 +255,8 @@ async function main(): Promise<void> {
     const endsAt = new Date(now + spec.to * DAY);
     const campaign = await prisma.campaign.create({
       data: {
-        userId: advertiser.id,
+        organisationId: spec.advertiser === 'Casa Mobili' ? casa.id : brightline.id,
+        userId: spec.advertiser === 'Casa Mobili' ? rival.id : owner.id,
         title: spec.title,
         advertiser: spec.advertiser,
         status: spec.status ?? CampaignStatus.ACTIVE,
@@ -175,8 +315,7 @@ async function main(): Promise<void> {
         };
         row.impressions = (row.impressions ?? 0) + impressions;
         row.clicks = (row.clicks ?? 0) + Math.round(impressions * CLICK_RATE[device]);
-        row.completions =
-          (row.completions ?? 0) + Math.round(impressions * COMPLETION_RATE[slot]);
+        row.completions = (row.completions ?? 0) + Math.round(impressions * COMPLETION_RATE[slot]);
         merged.set(key, row);
       }
 

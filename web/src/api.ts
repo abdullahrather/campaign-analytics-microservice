@@ -1,10 +1,16 @@
 export type Status = 'ACTIVE' | 'PAUSED' | 'COMPLETED';
 export type Pacing = 'AHEAD' | 'ON_TRACK' | 'BEHIND' | 'NOT_STARTED' | 'FINISHED';
+export type OrganisationRole = 'OWNER' | 'MANAGER' | 'ANALYST';
 
 export interface User {
   id: string;
   email: string;
+  name: string;
   role: string;
+  twoFactorEnabled: boolean;
+  organisationId: string | null;
+  organisationRole: OrganisationRole | null;
+  organisations: Array<{ id: string; name: string; role: OrganisationRole }>;
 }
 
 export interface Totals {
@@ -67,48 +73,120 @@ export interface Range {
   to: string;
 }
 
-export interface Session {
-  token: string;
-  user: User;
+export interface Options {
+  demo: boolean;
+  signUp: boolean;
+  localMailbox: boolean;
 }
 
-const SESSION_KEY = 'campaign-analytics-session';
+export interface Member {
+  userId: string;
+  email: string;
+  name: string;
+  role: OrganisationRole;
+  joinedAt: string;
+}
 
-export const loadSession = (): Session | null => {
-  try {
-    return JSON.parse(sessionStorage.getItem(SESSION_KEY) ?? 'null') as Session | null;
-  } catch {
-    return null;
-  }
-};
+export interface Invitation {
+  id: string;
+  email: string;
+  role: OrganisationRole;
+  expiresAt: string;
+}
 
-const saveSession = (session: Session | null): void => {
-  try {
-    if (session) sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
-    else sessionStorage.removeItem(SESSION_KEY);
-  } catch {
-    // The session then lasts until the page is closed or reloaded.
-  }
-};
+export interface InvitationPreview {
+  email: string;
+  organisationName: string;
+  role: OrganisationRole;
+  hasAccount: boolean;
+}
+
+export interface Device {
+  id: string;
+  userAgent: string;
+  ipAddress: string;
+  lastUsedAt: string;
+  current: boolean;
+}
+
+export interface AuditEntry {
+  id: string;
+  action: string;
+  actorEmail: string;
+  targetType: string;
+  targetId: string;
+  details: Record<string, unknown>;
+  ipAddress: string;
+  createdAt: string;
+}
+
+export interface Page<T> {
+  data: T[];
+  meta: { total: number; page: number; limit: number; totalPages: number };
+}
+
+export interface AdminStats {
+  users: number;
+  organisations: number;
+  campaigns: number;
+  activeSessions: number;
+  suspendedUsers: number;
+}
+
+export interface AdminUser {
+  id: string;
+  email: string;
+  name: string;
+  role: string;
+  emailVerifiedAt: string | null;
+  suspendedAt: string | null;
+  twoFactorEnabledAt: string | null;
+  createdAt: string;
+  _count: { memberships: number };
+}
+
+export interface AdminOrganisation {
+  id: string;
+  name: string;
+  suspendedAt: string | null;
+  createdAt: string;
+  _count: { memberships: number; campaigns: number };
+}
+
+export interface CapturedEmail {
+  id: string;
+  recipient: string;
+  subject: string;
+  body: string;
+  link: string;
+  createdAt: string;
+}
+
+export interface TwoFactorChallenge {
+  twoFactorRequired: true;
+  challengeToken: string;
+}
 
 export class ApiError extends Error {
   constructor(
     public readonly status: number,
     message: string,
     public readonly fields?: Record<string, string[]>,
+    public readonly code?: string,
   ) {
     super(message);
   }
 }
 
-let token = loadSession()?.token ?? '';
+// The access token lives in memory only. The httpOnly cookie restores it after a reload.
+let token = '';
 let onExpired = (): void => {};
 export const setExpiredHandler = (handler: () => void): void => {
   onExpired = handler;
 };
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(path, {
+const send = (path: string, init: RequestInit): Promise<Response> =>
+  fetch(path, {
     ...init,
     headers: {
       ...(init.body ? { 'content-type': 'application/json' } : {}),
@@ -116,47 +194,155 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     },
   });
 
+// Parallel requests share one refresh, so the cookie rotates once.
+let refreshing: Promise<boolean> | null = null;
+
+const refreshToken = (): Promise<boolean> => {
+  refreshing ??= fetch('/auth/refresh', { method: 'POST' })
+    .then(async (response) => {
+      if (!response.ok) return false;
+      const body = (await response.json()) as { data: { token: string } };
+      token = body.data.token;
+      return true;
+    })
+    .catch(() => false)
+    .finally(() => {
+      refreshing = null;
+    });
+  return refreshing;
+};
+
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  let response = await send(path, init);
+
+  if (response.status === 401 && token && (await refreshToken())) {
+    response = await send(path, init);
+  }
+
   if (response.status === 204) return undefined as T;
 
   const body = (await response.json().catch(() => ({}))) as {
     data?: T;
+    meta?: unknown;
     message?: string;
+    code?: string;
     errors?: Record<string, string[]>;
   };
   if (!response.ok) {
-    if (response.status === 401 && token) onExpired();
-    throw new ApiError(response.status, body.message ?? 'Request failed.', body.errors);
+    if (response.status === 401 && token) {
+      token = '';
+      onExpired();
+    }
+    throw new ApiError(response.status, body.message ?? 'Request failed.', body.errors, body.code);
   }
-  return body.data as T;
+  return (body.meta ? { data: body.data, meta: body.meta } : body.data) as T;
 }
+
+const post = <T = void>(path: string, body?: unknown): Promise<T> =>
+  request<T>(path, {
+    method: 'POST',
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+
+const patch = (path: string, body: unknown): Promise<void> =>
+  request(path, { method: 'PATCH', body: JSON.stringify(body) });
+
+const remove = (path: string): Promise<void> => request(path, { method: 'DELETE' });
 
 const withRange = (path: string, range: Range): string =>
   `${path}?${new URLSearchParams({ from: range.from, to: range.to }).toString()}`;
 
+const withSearch = (path: string, params: Record<string, string | number>): string =>
+  `${path}?${new URLSearchParams(
+    Object.entries(params).map(([key, value]) => [key, String(value)]),
+  ).toString()}`;
+
 export const api = {
-  async login(email: string, password: string): Promise<Session> {
-    const data = await request<Session>('/auth/login', {
-      method: 'POST',
-      body: JSON.stringify({ email, password }),
+  /** Restores a signed-in session after a reload. */
+  async restore(): Promise<User | null> {
+    return (await refreshToken()) ? request<User>('/auth/me') : null;
+  },
+  async login(email: string, password: string): Promise<User | TwoFactorChallenge> {
+    const data = await post<{ token: string } | TwoFactorChallenge>('/auth/login', {
+      email,
+      password,
     });
+    if ('twoFactorRequired' in data) return data;
     token = data.token;
-    saveSession({ token: data.token, user: data.user });
-    return data;
+    return request<User>('/auth/me');
   },
-  logout(): void {
+  async completeTwoFactor(challengeToken: string, code: string): Promise<User> {
+    const data = await post<{ token: string }>('/auth/two-factor', { challengeToken, code });
+    token = data.token;
+    return request<User>('/auth/me');
+  },
+  async logout(): Promise<void> {
+    await post('/auth/logout').catch(() => undefined);
     token = '';
-    saveSession(null);
   },
+  me: () => request<User>('/auth/me'),
+  options: () => request<Options>('/auth/options'),
+  register: (input: { email: string; password: string; name: string; organisationName: string }) =>
+    post('/auth/register', input),
+  verifyEmail: (verificationToken: string) =>
+    post('/auth/verify-email', { token: verificationToken }),
+  resendVerification: (email: string) => post('/auth/resend-verification', { email }),
+  forgotPassword: (email: string) => post('/auth/forgot-password', { email }),
+  resetPassword: (resetToken: string, password: string) =>
+    post('/auth/reset-password', { token: resetToken, password }),
+  switchOrganisation: (organisationId: string) =>
+    post('/auth/switch-organisation', { organisationId }),
+
   analytics: (range: Range) => request<Campaign[]>(withRange('/campaigns/analytics', range)),
   timeseries: (range: Range) =>
     request<Point[]>(withRange('/campaigns/analytics/timeseries', range)),
   campaign: (id: string, range: Range) =>
     request<CampaignDetail>(withRange(`/campaigns/${id}/analytics`, range)),
-  options: () => request<{ demo: boolean }>('/auth/options'),
   shows: () => request<Show[]>('/shows'),
-  create: (input: CampaignInput) =>
-    request<{ id: string }>('/campaigns', { method: 'POST', body: JSON.stringify(input) }),
+  create: (input: CampaignInput) => post<{ id: string }>('/campaigns', input),
   update: (id: string, input: Partial<CampaignInput>) =>
     request<{ id: string }>(`/campaigns/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
-  remove: (id: string) => request<void>(`/campaigns/${id}`, { method: 'DELETE' }),
+  remove: (id: string) => remove(`/campaigns/${id}`),
+
+  updateProfile: (name: string) => patch('/account/profile', { name }),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    post('/account/password', { currentPassword, newPassword }),
+  devices: () => request<Device[]>('/account/sessions'),
+  signOutOthers: () => remove('/account/sessions'),
+  signOutDevice: (id: string) => remove(`/account/sessions/${id}`),
+  startTwoFactor: () => post<{ secret: string; qrCode: string }>('/account/two-factor/setup'),
+  enableTwoFactor: (code: string) =>
+    post<{ recoveryCodes: string[] }>('/account/two-factor/enable', { code }),
+  disableTwoFactor: (password: string, code: string) =>
+    post('/account/two-factor/disable', { password, code }),
+
+  createOrganisation: (name: string) => post('/team/organisations', { name }),
+  members: () => request<Member[]>('/team/members'),
+  changeRole: (userId: string, role: OrganisationRole) =>
+    patch(`/team/members/${userId}`, { role }),
+  removeMember: (userId: string) => remove(`/team/members/${userId}`),
+  invitations: () => request<Invitation[]>('/team/invitations'),
+  invite: (email: string, role: OrganisationRole) => post('/team/invitations', { email, role }),
+  cancelInvitation: (id: string) => remove(`/team/invitations/${id}`),
+  teamAudit: (page: number) => request<Page<AuditEntry>>(withSearch('/team/audit', { page })),
+  previewInvitation: (invitationToken: string) =>
+    post<InvitationPreview>('/invitations/preview', { token: invitationToken }),
+  acceptInvitation: (invitationToken: string, name?: string, password?: string) =>
+    post('/invitations/accept', {
+      token: invitationToken,
+      ...(name ? { name } : {}),
+      ...(password ? { password } : {}),
+    }),
+
+  adminStats: () => request<AdminStats>('/admin/stats'),
+  adminUsers: (q: string, page: number) =>
+    request<Page<AdminUser>>(withSearch('/admin/users', { q, page })),
+  adminOrganisations: (q: string, page: number) =>
+    request<Page<AdminOrganisation>>(withSearch('/admin/organisations', { q, page })),
+  suspendUser: (id: string, suspended: boolean) => patch(`/admin/users/${id}`, { suspended }),
+  suspendOrganisation: (id: string, suspended: boolean) =>
+    patch(`/admin/organisations/${id}`, { suspended }),
+  adminAudit: (page: number) => request<Page<AuditEntry>>(withSearch('/admin/audit', { page })),
+
+  mailbox: () => request<CapturedEmail[]>('/dev/mailbox'),
 };

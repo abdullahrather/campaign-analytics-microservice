@@ -8,20 +8,16 @@
  * on the standard Request type.
  */
 import 'express';
+import type { Actor } from '../lib/actor';
 
 declare global {
   namespace Express {
     interface Request {
       /**
-       * The decoded JWT payload, populated by the `authenticate` middleware.
+       * The signed-in person, populated by the `authenticate` middleware.
        * Only present on protected routes.
        */
-      user?: {
-        /** Subject — the User's CUID (primary key) */
-        sub: string;
-        /** The user's role (ADMIN | ADVERTISER) */
-        role: string;
-      };
+      user?: Actor;
     }
   }
 }

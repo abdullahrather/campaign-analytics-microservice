@@ -11,7 +11,7 @@ npm install
 npm run dev
 ```
 
-See the [README](./README.md) for the demo logins and [ROADMAP.md](./ROADMAP.md) for planned work.
+See the [README](./README.md) for the demo logins.
 
 ## Before you open a pull request
 

@@ -145,7 +145,7 @@ For a real deployment, build the `production` image target and set `DATABASE_URL
 
 ## Known limits
 
-This is a working demonstration, not a system that has run under real load. [ROADMAP.md](./ROADMAP.md) shows where it's heading.
+This is a working demonstration, not a system that has run under real load.
 
 - Sending the same event batch twice counts it twice, because events have no IDs.
 - Budgets and goals are checked as events arrive, so a campaign can slightly overshoot under heavy traffic.

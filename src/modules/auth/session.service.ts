@@ -74,25 +74,15 @@ class SessionService {
     const hash = hashToken(secret);
 
     if (hash === session.previousRefreshHash) {
-      const age = Date.now() - (session.rotatedAt?.getTime() ?? 0);
-      if (age < ROTATION_GRACE_MS) {
-        return { accessToken: signAccessToken(session.userId, session.id) };
-      }
-
-      await this.revoke(session);
-      await auditService.record({
-        action: 'auth.session_reuse_detected',
-        actorId: session.userId,
-        ipAddress: context.ipAddress,
-      });
-      return null;
+      return this.handleOldToken(session, context);
     }
 
     if (hash !== session.refreshHash) return null;
 
+    // Only one of several overlapping requests can win this conditional write.
     const nextSecret = randomToken();
-    await prisma.session.update({
-      where: { id: session.id },
+    const { count } = await prisma.session.updateMany({
+      where: { id: session.id, refreshHash: hash },
       data: {
         refreshHash: hashToken(nextSecret),
         previousRefreshHash: hash,
@@ -104,10 +94,34 @@ class SessionService {
       },
     });
 
+    if (count === 0) {
+      const rotated = await prisma.session.findUnique({ where: { id: session.id } });
+      return rotated?.previousRefreshHash === hash ? this.handleOldToken(rotated, context) : null;
+    }
+
     return {
       accessToken: signAccessToken(session.userId, session.id),
       refreshToken: `${session.id}.${nextSecret}`,
     };
+  }
+
+  /** Fine just after rotation, when another tab won the race. Later, it means theft. */
+  private async handleOldToken(
+    session: Session,
+    context: RequestContext,
+  ): Promise<IssuedTokens | null> {
+    const age = Date.now() - (session.rotatedAt?.getTime() ?? 0);
+    if (age < ROTATION_GRACE_MS) {
+      return { accessToken: signAccessToken(session.userId, session.id) };
+    }
+
+    await this.revoke(session);
+    await auditService.record({
+      action: 'auth.session_reuse_detected',
+      actorId: session.userId,
+      ipAddress: context.ipAddress,
+    });
+    return null;
   }
 
   private revoke(session: Session): Promise<Session> {

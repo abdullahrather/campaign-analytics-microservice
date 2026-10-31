@@ -180,8 +180,9 @@ export const openApiDocument = {
       post: {
         tags: ['Auth'],
         summary: 'Finish signing in with an authenticator or recovery code',
+        description: 'Five wrong codes lock two-factor sign-in for the account for 15 minutes.',
         requestBody: jsonBody(twoFactorChallengeSchema),
-        responses: responses('200', 'Signed in', '401', '403', '422'),
+        responses: responses('200', 'Signed in', '401', '403', '422', '429'),
       },
     },
     '/auth/refresh': {
@@ -522,6 +523,7 @@ export const openApiDocument = {
       404: { description: 'Not found, or belongs to another advertiser' },
       409: { description: 'Not allowed in the current state' },
       422: { description: 'The request failed validation' },
+      429: { description: 'Too many attempts' },
     },
   },
 };

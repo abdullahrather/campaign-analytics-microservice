@@ -199,6 +199,25 @@ describe('Sessions', () => {
     expect(second.headers['set-cookie']).toBeUndefined();
   });
 
+  it('rotates once when refreshes overlap, leaving a cookie that works', async () => {
+    const user = await createTestUser();
+    const first = await request(app).post('/auth/login').send(user);
+    const cookie = refreshCookie(first);
+
+    const results = await Promise.all(
+      Array.from({ length: 8 }, () => request(app).post('/auth/refresh').set('Cookie', cookie)),
+    );
+
+    expect(results.map(({ status }) => status)).toEqual(Array(8).fill(200));
+    const rotated = results.filter((res) => res.headers['set-cookie']);
+    expect(rotated).toHaveLength(1);
+
+    const next = await request(app)
+      .post('/auth/refresh')
+      .set('Cookie', refreshCookie(rotated[0] as request.Response));
+    expect(next.status).toBe(200);
+  });
+
   it('ends the session when an old refresh token is replayed later', async () => {
     const user = await createTestUser();
     const first = await request(app).post('/auth/login').send(user);
@@ -396,6 +415,94 @@ describe('Two-factor login', () => {
     expect(recoveryCodes).toHaveLength(8);
     expect(first.status).toBe(200);
     expect(second.status).toBe(401);
+  });
+
+  it('keeps recovery codes working if the secret can no longer be decrypted', async () => {
+    const user = await createTestUser();
+    const { recoveryCodes } = await enrol(user);
+    await testPrisma.user.updateMany({ data: { twoFactorSecret: 'not.a.valid-secret' } });
+
+    const wrong = await request(app)
+      .post('/auth/two-factor')
+      .send({ challengeToken: await challenge(user), code: '000000' });
+    const recovered = await request(app)
+      .post('/auth/two-factor')
+      .send({ challengeToken: await challenge(user), code: recoveryCodes[0] });
+
+    expect(wrong.status).toBe(401);
+    expect(recovered.status).toBe(200);
+  });
+
+  it('locks after five wrong codes, even for the right code and a new challenge', async () => {
+    const user = await createTestUser({ email: 'locked@test.com' });
+    const { secret } = await enrol(user);
+    await forgetLastCode();
+    const challengeToken = await challenge(user);
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const res = await request(app)
+        .post('/auth/two-factor')
+        .send({ challengeToken, code: '000000' });
+      expect(res.status).toBe(attempt === 4 ? 429 : 401);
+    }
+
+    const sameChallenge = await request(app)
+      .post('/auth/two-factor')
+      .send({ challengeToken, code: totpCode(secret) });
+    const newChallenge = await request(app)
+      .post('/auth/two-factor')
+      .send({ challengeToken: await challenge(user), code: totpCode(secret) });
+
+    expect(sameChallenge.status).toBe(429);
+    expect(newChallenge.status).toBe(429);
+    await emailTo(user.email, 'Too many');
+  });
+
+  it('unlocks after the wait, and a right code clears the count', async () => {
+    const user = await createTestUser();
+    const { secret } = await enrol(user);
+    await forgetLastCode();
+    await testPrisma.user.updateMany({
+      data: { twoFactorFailures: 5, twoFactorLockedUntil: new Date(Date.now() - 1000) },
+    });
+
+    const res = await request(app)
+      .post('/auth/two-factor')
+      .send({ challengeToken: await challenge(user), code: totpCode(secret) });
+
+    expect(res.status).toBe(200);
+    const stored = await testPrisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    expect(stored.twoFactorFailures).toBe(0);
+    expect(stored.twoFactorLockedUntil).toBeNull();
+  });
+
+  it('counts simultaneous guesses', async () => {
+    const user = await createTestUser();
+    await enrol(user);
+    const challengeToken = await challenge(user);
+
+    const results = await Promise.all(
+      Array.from({ length: 20 }, () =>
+        request(app).post('/auth/two-factor').send({ challengeToken, code: '000000' }),
+      ),
+    );
+
+    expect(results.filter(({ status }) => status === 401).length).toBeLessThanOrEqual(4);
+  });
+
+  it('spends a recovery code once when it is sent twice at the same time', async () => {
+    const user = await createTestUser();
+    const { recoveryCodes } = await enrol(user);
+    const code = recoveryCodes[0];
+    const tokens = [await challenge(user), await challenge(user), await challenge(user)];
+
+    const results = await Promise.all(
+      tokens.map((challengeToken) =>
+        request(app).post('/auth/two-factor').send({ challengeToken, code }),
+      ),
+    );
+
+    expect(results.filter(({ status }) => status === 200)).toHaveLength(1);
   });
 
   it('needs the password and a code to turn off', async () => {

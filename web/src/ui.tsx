@@ -60,6 +60,7 @@ const ACTION_LABELS: Record<string, string> = {
   'auth.recovery_code_used': 'Used a recovery code',
   'auth.session_reuse_detected': 'Stolen session blocked',
   'auth.two_factor_failed': 'Entered a wrong two-factor code',
+  'auth.two_factor_locked': 'Locked after too many wrong codes',
   'campaign.created': 'Created a campaign',
   'campaign.deleted': 'Deleted a campaign',
   'campaign.updated': 'Changed a campaign',

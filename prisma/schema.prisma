@@ -59,22 +59,25 @@ enum Device {
 
 /// A person who can sign in.
 model User {
-  id                 String    @id @default(cuid())
-  email              String    @unique
-  name               String    @default("")
-  passwordHash       String    @map("password_hash")
-  role               Role      @default(ADVERTISER)
-  emailVerifiedAt    DateTime? @map("email_verified_at") @db.Timestamptz(3)
-  suspendedAt        DateTime? @map("suspended_at") @db.Timestamptz(3)
+  id                   String    @id @default(cuid())
+  email                String    @unique
+  name                 String    @default("")
+  passwordHash         String    @map("password_hash")
+  role                 Role      @default(ADVERTISER)
+  emailVerifiedAt      DateTime? @map("email_verified_at") @db.Timestamptz(3)
+  suspendedAt          DateTime? @map("suspended_at") @db.Timestamptz(3)
   /// Encrypted. Only active once twoFactorEnabledAt is set.
-  twoFactorSecret    String?   @map("two_factor_secret")
-  twoFactorEnabledAt DateTime? @map("two_factor_enabled_at") @db.Timestamptz(3)
+  twoFactorSecret      String?   @map("two_factor_secret")
+  twoFactorEnabledAt   DateTime? @map("two_factor_enabled_at") @db.Timestamptz(3)
   /// The last accepted code's time step, so a code can't be used twice.
-  twoFactorLastStep  BigInt?   @map("two_factor_last_step")
+  twoFactorLastStep    BigInt?   @map("two_factor_last_step")
+  /// Wrong codes in a row. Counted per account, because guesses can come from many addresses.
+  twoFactorFailures    Int       @default(0) @map("two_factor_failures")
+  twoFactorLockedUntil DateTime? @map("two_factor_locked_until") @db.Timestamptz(3)
   /// Hashed, one-use codes for a lost authenticator.
-  recoveryCodes      String[]  @default([]) @map("recovery_codes")
-  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt          DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  recoveryCodes        String[]  @default([]) @map("recovery_codes")
+  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   campaigns   Campaign[]
   memberships Membership[]

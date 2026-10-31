@@ -28,6 +28,24 @@ const DUMMY_HASH = bcrypt.hashSync('no-account-has-this-password', BCRYPT_COST);
 const VERIFICATION_HOURS = 24;
 const RESET_HOURS = 1;
 const CHALLENGE_TTL = '5m';
+const MAX_TWO_FACTOR_FAILURES = 5;
+const TWO_FACTOR_LOCK_MS = 15 * 60_000;
+
+const lockedOut = (): AppError =>
+  new AppError(429, 'Too many wrong codes. Try again in 15 minutes.', 'TWO_FACTOR_LOCKED');
+
+/** Checks a code against a stored secret. An unreadable secret matches nothing. */
+export const matchTotp = (
+  encryptedSecret: string,
+  code: string,
+  lastStep: bigint | null,
+): bigint | null => {
+  try {
+    return verifyTotp(decrypt(encryptedSecret), code, lastStep);
+  } catch {
+    return null;
+  }
+};
 
 export interface SignedIn extends IssuedTokens {
   expiresIn: string;
@@ -221,6 +239,7 @@ export class AuthService {
     const user = userId ? await prisma.user.findUnique({ where: { id: userId } }) : null;
     if (!user?.twoFactorSecret || !user.twoFactorEnabledAt) throw invalid;
     this.assertCanSignIn(user);
+    await this.reserveTwoFactorAttempt(user);
 
     if (!(await this.acceptSecondFactor(user, dto.code))) {
       await auditService.record({
@@ -229,27 +248,93 @@ export class AuthService {
         actorEmail: user.email,
         ipAddress: context.ipAddress,
       });
+      await this.lockIfOutOfAttempts(user, context);
       throw invalid;
     }
 
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { twoFactorFailures: 0, twoFactorLockedUntil: null },
+    });
     return this.signIn(user, context);
   }
 
-  /** Accepts an authenticator code, or uses up one recovery code. */
+  /**
+   * Counts the attempt before checking the code, per account rather than per IP
+   * address, so simultaneous guesses from anywhere share the same limit.
+   */
+  private async reserveTwoFactorAttempt(user: User): Promise<void> {
+    if (user.twoFactorLockedUntil && user.twoFactorLockedUntil > new Date()) {
+      throw lockedOut();
+    }
+
+    if (user.twoFactorLockedUntil) {
+      await prisma.user.updateMany({
+        where: { id: user.id, twoFactorLockedUntil: user.twoFactorLockedUntil },
+        data: { twoFactorFailures: 0, twoFactorLockedUntil: null },
+      });
+    }
+
+    const { count } = await prisma.user.updateMany({
+      where: { id: user.id, twoFactorFailures: { lt: MAX_TWO_FACTOR_FAILURES } },
+      data: { twoFactorFailures: { increment: 1 } },
+    });
+    if (count === 0) throw lockedOut();
+  }
+
+  private async lockIfOutOfAttempts(user: User, context: RequestContext): Promise<void> {
+    const { count } = await prisma.user.updateMany({
+      where: {
+        id: user.id,
+        twoFactorFailures: { gte: MAX_TWO_FACTOR_FAILURES },
+        twoFactorLockedUntil: null,
+      },
+      data: { twoFactorLockedUntil: new Date(Date.now() + TWO_FACTOR_LOCK_MS) },
+    });
+    if (count === 0) return;
+
+    await auditService.record({
+      action: 'auth.two_factor_locked',
+      actorId: user.id,
+      actorEmail: user.email,
+      ipAddress: context.ipAddress,
+    });
+    sendEmail({
+      to: user.email,
+      subject: 'Too many two-factor attempts',
+      body: 'Someone entered your password correctly, then too many wrong codes. If this was not you, change your password now.',
+      link: `${env.APP_URL}/#/forgot-password`,
+    });
+    throw lockedOut();
+  }
+
+  /**
+   * Accepts an authenticator code, or uses up one recovery code. A secret that
+   * can't be decrypted, such as after ENCRYPTION_KEY changes, leaves recovery
+   * codes as the way in. Conditional writes make each code usable only once.
+   */
   async acceptSecondFactor(user: User, code: string): Promise<boolean> {
-    const step = verifyTotp(decrypt(user.twoFactorSecret as string), code, user.twoFactorLastStep);
+    const step = matchTotp(user.twoFactorSecret as string, code, user.twoFactorLastStep);
     if (step !== null) {
-      await prisma.user.update({ where: { id: user.id }, data: { twoFactorLastStep: step } });
-      return true;
+      const { count } = await prisma.user.updateMany({
+        where: {
+          id: user.id,
+          OR: [{ twoFactorLastStep: null }, { twoFactorLastStep: { lt: step } }],
+        },
+        data: { twoFactorLastStep: step },
+      });
+      return count > 0;
     }
 
     const hash = hashToken(code.toUpperCase());
     if (!user.recoveryCodes.includes(hash)) return false;
 
-    await prisma.user.update({
-      where: { id: user.id },
+    const { count } = await prisma.user.updateMany({
+      where: { id: user.id, recoveryCodes: { has: hash } },
       data: { recoveryCodes: user.recoveryCodes.filter((stored) => stored !== hash) },
     });
+    if (count === 0) return false;
+
     await auditService.record({ action: 'auth.recovery_code_used', actorId: user.id });
     return true;
   }

@@ -99,6 +99,7 @@ For each ad break, `/ad-decision` keeps campaigns that are active, inside their 
 
 - **Passwords** are hashed with bcrypt. Sign-in, sign-up and password reset respond the same way whether or not an account exists.
 - **Sessions** use a 15-minute access token held in memory, and a rotating refresh token in an httpOnly cookie. Reusing an old refresh token ends the session.
+- **Two-factor sign-in** locks for 15 minutes after five wrong codes, counted per account, and emails the owner.
 - **Permissions** are checked against the database on every request, so sign-outs, suspensions and role changes apply immediately.
 - **Secrets** are never stored in plain text: email links and recovery codes are hashed, and two-factor secrets are encrypted.
 

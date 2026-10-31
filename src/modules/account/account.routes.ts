@@ -10,13 +10,13 @@ import { randomBytes } from 'crypto';
 import { z } from 'zod';
 import { actorOf, contextOf, handle } from '@/lib/http';
 import { prisma } from '@/lib/prisma';
-import { decrypt, encrypt, hashToken } from '@/lib/security';
-import { generateTotpSecret, totpUri, verifyTotp } from '@/lib/totp';
+import { encrypt, hashToken } from '@/lib/security';
+import { generateTotpSecret, totpUri } from '@/lib/totp';
 import { authenticate, requirePersonalAccount } from '@/middleware/authenticate';
 import { AppError } from '@/middleware/errorHandler';
 import { auditService } from '@/modules/audit/audit.service';
 import { newPassword, personName } from '@/modules/auth/auth.schema';
-import { authService, BCRYPT_COST } from '@/modules/auth/auth.service';
+import { authService, BCRYPT_COST, matchTotp } from '@/modules/auth/auth.service';
 import { sessionService } from '@/modules/auth/session.service';
 
 const RECOVERY_CODE_COUNT = 8;
@@ -151,7 +151,7 @@ accountRouter.post(
     if (user.twoFactorEnabledAt) throw new AppError(409, 'Two-factor login is already on.');
     if (!user.twoFactorSecret) throw new AppError(409, 'Start two-factor setup first.');
 
-    const step = verifyTotp(decrypt(user.twoFactorSecret), code, null);
+    const step = matchTotp(user.twoFactorSecret, code, null);
     if (step === null) throw new AppError(422, 'That code is not valid.');
 
     const recoveryCodes = Array.from({ length: RECOVERY_CODE_COUNT }, () =>

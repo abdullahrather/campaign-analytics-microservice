@@ -33,7 +33,7 @@ export default defineConfig({
         '/team',
         '/track',
         '/vast',
-      ].map((path) => [path, api]),
+      ].map((path) => [path, { target: api, changeOrigin: false }]),
     ),
   },
 });

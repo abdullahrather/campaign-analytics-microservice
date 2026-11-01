@@ -2,6 +2,18 @@
 
 The main changes in each version. Every release's full notes are on the [Releases page](https://github.com/abdullahrather/streaming-ad-platform/releases).
 
+## Unreleased
+
+### Added
+
+- Video ad upload with format checks, and conversion with FFmpeg
+- An admin review queue, so ads can't run until they're approved
+- VAST 4.2 ad serving with signed tracking links
+- A player SDK that reports impressions, quartiles, completions and clicks
+- A demo streaming site with pre-, mid- and post-roll ad breaks
+- A chart of how far viewers watch each campaign's ads
+- Fictional demo videos, generated when seeding
+
 ## 1.2.0
 
 ### Added

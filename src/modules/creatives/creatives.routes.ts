@@ -9,7 +9,7 @@ import path from 'path';
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import multer, { MulterError } from 'multer';
 import { env } from '@/config/env';
-import { actorOf, contextOf, handle } from '@/lib/http';
+import { actorOf, allowAnyOrigin, contextOf, handle } from '@/lib/http';
 import { storage } from '@/lib/storage';
 import { authenticate, requireWriteAccess } from '@/middleware/authenticate';
 import { AppError } from '@/middleware/errorHandler';
@@ -44,6 +44,7 @@ const creativesRouter = Router();
 const mediaRouter = Router();
 
 creativesRouter.use(authenticate);
+mediaRouter.use('/media', allowAnyOrigin);
 
 creativesRouter.get(
   '/',

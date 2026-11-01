@@ -10,7 +10,7 @@ import { Router, type Request } from 'express';
 import rateLimit from 'express-rate-limit';
 import jwt from 'jsonwebtoken';
 import { env } from '@/config/env';
-import { handle } from '@/lib/http';
+import { allowAnyOrigin, handle } from '@/lib/http';
 import { prisma } from '@/lib/prisma';
 import { storage } from '@/lib/storage';
 import { AppError } from '@/middleware/errorHandler';
@@ -53,6 +53,7 @@ const playerLimiter = rateLimit({
 });
 
 playbackRouter.use(['/vast', '/track', '/click', '/player'], playerLimiter);
+playbackRouter.use(['/vast', '/track', '/player'], allowAnyOrigin);
 
 // One ad view counts each event once, even if a player sends it again.
 const remembered = new Set<string>();

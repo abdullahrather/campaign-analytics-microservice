@@ -374,6 +374,23 @@ describe('Serving ads through VAST', () => {
     expect(matchAll(xml, 'ClickThrough')).toHaveLength(1);
   });
 
+  it('works for players on other websites', async () => {
+    const { res, creative } = await served();
+
+    const video = await request(app).get(`/media/creatives/${creative.id}/video`);
+
+    expect(res.headers['access-control-allow-origin']).toBe('*');
+    expect(video.headers['access-control-allow-origin']).toBe('*');
+    expect(video.headers['cross-origin-resource-policy']).toBe('cross-origin');
+  });
+
+  it('keeps the signed-in API closed to other websites', async () => {
+    const res = await request(app).get('/campaigns').set('Origin', 'https://other.example');
+
+    expect(res.headers['access-control-allow-origin']).toBeUndefined();
+    expect(res.headers['cross-origin-resource-policy']).toBe('same-origin');
+  });
+
   it('escapes names in the XML', async () => {
     const owner = await createTestUser();
     const show = await createTestShow();

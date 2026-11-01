@@ -3,7 +3,7 @@ import http from 'k6/http';
 import { check } from 'k6';
 import { Counter } from 'k6/metrics';
 
-const { RATE, DURATION, SHOW, KEY, TARGETS, MAX_DECISIONS } = __ENV;
+const { RATE, DURATION, SHOW, KEY, TARGETS, MAX_DECISIONS, CAMPAIGN } = __ENV;
 
 const targets = TARGETS.split(',');
 const served = new Counter('ads_served');
@@ -38,7 +38,9 @@ export default function decide() {
   const response = http.get(url, { headers });
 
   if (check(response, { answered: ({ status }) => status === 200 })) {
-    if (response.json().data) served.add(1);
+    // After the limit, requests correctly move on to other campaigns.
+    const { data } = response.json();
+    if (data && (!CAMPAIGN || data.campaignId === CAMPAIGN)) served.add(1);
     else empty.add(1);
   }
 }

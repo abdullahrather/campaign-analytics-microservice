@@ -4,6 +4,7 @@
 // with what the API accepted. One lost or repeated event fails the run.
 //
 // Options: RATE=10000 DURATION=5m BATCH=100 DECISION_RATE=2000 API_PROCESSES=4 WORKERS=1
+// CRASH=1 kills the worker with no warning partway through, then starts a new one.
 import { spawn, spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -83,11 +84,12 @@ const children = [];
 const start = (file, env) => {
   const child = spawn(process.execPath, [file], { cwd: ROOT, env, stdio: 'ignore' });
   children.push(child);
+  return child;
 };
 
 const ports = Array.from({ length: API_PROCESSES }, (_, index) => FIRST_PORT + index);
 ports.forEach((port) => start('dist/server.js', { ...serverEnv, PORT: String(port) }));
-for (let index = 0; index < WORKERS; index += 1) start('dist/worker.js', serverEnv);
+const workers = Array.from({ length: WORKERS }, () => start('dist/worker.js', serverEnv));
 
 for (const port of ports) {
   for (let attempt = 0; ; attempt += 1) {
@@ -108,7 +110,7 @@ const k6 = async (script, env, summary) => {
     ...Object.entries({ TARGETS: targets, KEY: process.env.INGEST_API_KEY, ...env }).flatMap(
       ([name, value]) => ['-e', `${name}=${value}`],
     ),
-    K6_IMAGE, 'run', '--quiet', `--summary-export=/output/${summary}`, `/scripts/${script}`,
+    K6_IMAGE, 'run', '--quiet', '--summary-trend-stats=avg,p(95),p(99),max', `--summary-export=/output/${summary}`, `/scripts/${script}`,
   ];
 
   await new Promise((resolve) => {
@@ -145,6 +147,16 @@ let passed = true;
 try {
   // 1. Sustained events
   console.info(`Events: ${RATE}/s for ${DURATION}, in batches of ${BATCH}...`);
+  if (process.env.CRASH === '1') {
+    setTimeout(() => {
+      console.info('Killing the worker...');
+      workers[0].kill('SIGKILL');
+      setTimeout(() => {
+        console.info('Starting a new worker...');
+        workers[0] = start('dist/worker.js', serverEnv);
+      }, 5000);
+    }, 15_000);
+  }
   const events = await k6(
     'events.js',
     { RATE, DURATION, BATCH, CAMPAIGN: eventsCampaign, SHOW: showId, RUN: run },
@@ -191,13 +203,17 @@ try {
   console.info(`Hard limit: ${RACE_REQUESTS} requests racing for ${RACE_CAP} ads...`);
   const race = await k6(
     'decisions.js',
-    { RATE: 1, DURATION: '1s', SHOW: showId, MAX_DECISIONS: RACE_REQUESTS },
+    { RATE: 1, DURATION: '1s', SHOW: showId, MAX_DECISIONS: RACE_REQUESTS, CAMPAIGN: raceCampaign },
     'race.json',
   );
   const served = count(race, 'ads_served');
-  const raceExact = served === RACE_CAP;
+  const reserved = Number(await redis.get(`served:${raceCampaign}`));
+  const raceExact = served === RACE_CAP && reserved === RACE_CAP;
   passed &&= raceExact;
-  results.push([`Ads served against a limit of ${RACE_CAP.toLocaleString('en')}`, served.toLocaleString('en')]);
+  results.push(
+    [`Ads served against a limit of ${RACE_CAP.toLocaleString('en')}`, served.toLocaleString('en')],
+    ['Requests that raced for them', count(race, 'http_reqs').toLocaleString('en')],
+  );
 
   await database.query('DELETE FROM campaigns WHERE id = ANY($1)', [[raceCampaign, eventsCampaign]]);
 } finally {

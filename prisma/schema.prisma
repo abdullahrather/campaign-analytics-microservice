@@ -28,6 +28,15 @@ enum OrganisationRole {
   ANALYST
 }
 
+/// PROCESSING -> PENDING_REVIEW -> APPROVED or REJECTED. FAILED means the video couldn't be converted.
+enum CreativeStatus {
+  PROCESSING
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+  FAILED
+}
+
 enum TokenPurpose {
   EMAIL_VERIFICATION
   PASSWORD_RESET
@@ -207,9 +216,11 @@ model CapturedEmail {
 
 /// A title in the streaming catalogue that ads can run against.
 model Show {
-  id    String @id @default(cuid())
-  title String @unique
-  genre String
+  id       String @id @default(cuid())
+  title    String @unique
+  genre    String
+  /// Storage key of the demo episode. Empty when no video exists.
+  videoKey String @default("") @map("video_key")
 
   metrics Metric[]
 
@@ -240,6 +251,7 @@ model Campaign {
   organisation Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
   user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   metrics      Metric[]
+  creatives    Creative[]
 
   @@index([organisationId])
   @@index([userId])
@@ -247,18 +259,52 @@ model Campaign {
   @@map("campaigns")
 }
 
+/// A video ad. It can only run once a platform admin has approved it.
+model Creative {
+  id              String         @id @default(cuid())
+  campaignId      String         @map("campaign_id")
+  name            String
+  clickUrl        String         @map("click_url")
+  status          CreativeStatus @default(PROCESSING)
+  /// Storage keys. The original is removed after conversion.
+  originalKey     String         @default("") @map("original_key")
+  videoKey        String         @default("") @map("video_key")
+  posterKey       String         @default("") @map("poster_key")
+  durationSeconds Float          @default(0) @map("duration_seconds")
+  width           Int            @default(0)
+  height          Int            @default(0)
+  sizeBytes       Int            @default(0) @map("size_bytes")
+  failureReason   String         @default("") @map("failure_reason")
+  rejectionReason String         @default("") @map("rejection_reason")
+  createdById     String         @map("created_by_id")
+  reviewedById    String?        @map("reviewed_by_id")
+  reviewedAt      DateTime?      @map("reviewed_at") @db.Timestamptz(3)
+  createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId, status])
+  @@index([status, createdAt])
+  @@map("creatives")
+}
+
 /// Hourly rollup of ad events. One row per campaign, hour, show, slot, country
 /// and device, so reads stay fast however many raw events arrive.
 model Metric {
-  campaignId  String   @map("campaign_id")
-  showId      String   @map("show_id")
-  slot        AdSlot
-  country     String   @db.Char(2)
-  device      Device
-  bucket      DateTime @db.Timestamptz(3)
-  impressions Int      @default(0)
-  clicks      Int      @default(0)
-  completions Int      @default(0)
+  campaignId     String   @map("campaign_id")
+  showId         String   @map("show_id")
+  slot           AdSlot
+  country        String   @db.Char(2)
+  device         Device
+  bucket         DateTime @db.Timestamptz(3)
+  impressions    Int      @default(0)
+  clicks         Int      @default(0)
+  /// How many viewers reached 25%, 50% and 75% of the ad.
+  firstQuartiles Int      @default(0) @map("first_quartiles")
+  midpoints      Int      @default(0)
+  thirdQuartiles Int      @default(0) @map("third_quartiles")
+  completions    Int      @default(0)
 
   campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   show     Show     @relation(fields: [showId], references: [id], onDelete: Restrict)

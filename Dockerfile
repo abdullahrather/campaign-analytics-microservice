@@ -41,6 +41,8 @@ COPY --from=builder /app/web/dist ./web/dist
 
 EXPOSE 3000
 
+RUN mkdir -p .data/media && chown -R node:node .data
+
 USER node
 
 CMD ["sh", "-c", "npx prisma migrate deploy && node dist/server.js"]

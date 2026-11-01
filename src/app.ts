@@ -20,9 +20,11 @@ import { accountRouter } from '@/modules/account/account.routes';
 import { adminRouter } from '@/modules/admin/admin.routes';
 import { authRouter } from '@/modules/auth/auth.routes';
 import { campaignsRouter } from '@/modules/campaigns/campaigns.routes';
+import { creativesRouter, mediaRouter } from '@/modules/creatives/creatives.routes';
 import { deliveryRouter } from '@/modules/delivery/delivery.routes';
 import { devRouter } from '@/modules/dev/dev.routes';
 import { docsRouter } from '@/modules/docs/docs.routes';
+import { playbackRouter } from '@/modules/playback/playback.routes';
 import { showsRouter } from '@/modules/shows/shows.routes';
 import { invitationsRouter, teamRouter } from '@/modules/team/team.routes';
 import { errorHandler } from '@/middleware/errorHandler';
@@ -76,12 +78,15 @@ export function createApp(): Application {
   app.use('/invitations', invitationsRouter);
   app.use('/admin', adminRouter);
   app.use('/campaigns', campaignsRouter);
+  app.use('/creatives', creativesRouter);
+  app.use(mediaRouter);
+  app.use(playbackRouter);
   app.use('/shows', showsRouter);
   app.use(deliveryRouter);
 
   // ── Dashboard (when built) ────────────────────────────────────────────────
   if (fs.existsSync(DASHBOARD_DIR)) {
-    app.use(express.static(DASHBOARD_DIR));
+    app.use(express.static(DASHBOARD_DIR, { extensions: ['html'] }));
   }
 
   // ── 404 handler ───────────────────────────────────────────────────────────

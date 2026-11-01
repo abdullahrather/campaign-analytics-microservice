@@ -1,0 +1,251 @@
+:root {
+  color-scheme: dark;
+  --page: #0d0d0d;
+  --surface: #1a1a19;
+  --ink: #f0efec;
+  --ink-2: #c3c2b7;
+  --border: rgba(255, 255, 255, 0.1);
+  --accent: #3987e5;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--ink);
+  font:
+    15px/1.5 system-ui,
+    -apple-system,
+    'Segoe UI',
+    sans-serif;
+}
+
+h1 {
+  margin: 1rem 0 0.25rem;
+  font-size: 1.6rem;
+  letter-spacing: -0.02em;
+}
+
+h2 {
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+}
+
+button,
+select {
+  font: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+.quiet {
+  color: var(--ink-2);
+}
+
+.site-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 1rem;
+  padding: 0.75rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.85rem;
+}
+
+.logo {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  cursor: pointer;
+}
+
+.catalogue,
+.watch {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 1rem 1.25rem 4rem;
+}
+
+.shows {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
+  gap: 1rem;
+  margin: 1rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.shows button {
+  display: grid;
+  gap: 0.2rem;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font-size: 0.875rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.shows img {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  margin-bottom: 0.35rem;
+  border-radius: 10px;
+  object-fit: cover;
+}
+
+.shows button:hover img {
+  filter: brightness(1.15);
+}
+
+.text-button {
+  margin-bottom: 0.75rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink-2);
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
+.stage {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 1rem;
+}
+
+.screen {
+  position: relative;
+  overflow: hidden;
+  aspect-ratio: 16 / 9;
+  border-radius: 12px;
+  background: #000;
+}
+
+.screen video {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.ad-bar {
+  position: absolute;
+  inset: auto 0 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.6rem 0.8rem;
+  background: rgba(0, 0, 0, 0.72);
+  font-size: 0.85rem;
+}
+
+.ad-bar button {
+  padding: 0.3rem 0.7rem;
+  border: 0;
+  border-radius: 6px;
+  background: var(--ink);
+  color: #0b0b0b;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.play {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  padding: 0.7rem 1.4rem;
+  border: 0;
+  border-radius: 10px;
+  background: var(--ink);
+  color: #0b0b0b;
+  font-weight: 600;
+  cursor: pointer;
+  transform: translate(-50%, -50%);
+}
+
+.finished {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  margin: 0;
+  padding: 0.5rem 1rem;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.7);
+  transform: translate(-50%, -50%);
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  min-height: 0;
+  max-height: 480px;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.panel h2:not(:first-child) {
+  margin-top: 0.5rem;
+}
+
+.panel label {
+  display: grid;
+  gap: 0.2rem;
+  color: var(--ink-2);
+  font-size: 0.8rem;
+}
+
+.panel select {
+  padding: 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--page);
+  color: var(--ink);
+}
+
+.log {
+  flex: 1;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.8rem;
+}
+
+.log li {
+  padding: 0.2rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.log span {
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 860px) {
+  .stage {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .panel {
+    max-height: 360px;
+  }
+}

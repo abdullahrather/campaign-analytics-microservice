@@ -76,6 +76,12 @@ h2 {
   font-weight: 600;
 }
 
+h3 {
+  margin: 1.25rem 0 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
 a {
   color: inherit;
 }
@@ -474,6 +480,39 @@ a.button {
   height: 100%;
   border-radius: 4px;
   background: var(--series-1);
+}
+
+.ad-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
+  gap: 1rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.875rem;
+}
+
+.ad-list video,
+.ad-placeholder,
+.review-card video {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  margin-bottom: 0.4rem;
+  border-radius: 8px;
+  background: #000;
+}
+
+.ad-placeholder {
+  display: grid;
+  place-items: center;
+  color: #c3c2b7;
+}
+
+.review-card {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+  gap: 1.25rem;
 }
 
 .goal {

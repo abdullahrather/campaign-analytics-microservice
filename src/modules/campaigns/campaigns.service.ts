@@ -38,6 +38,9 @@ export type Pacing = 'AHEAD' | 'ON_TRACK' | 'BEHIND' | 'NOT_STARTED' | 'FINISHED
 export interface PerformanceTotals {
   impressions: number;
   clicks: number;
+  firstQuartiles: number;
+  midpoints: number;
+  thirdQuartiles: number;
   completions: number;
   ctr: number;
   completionRate: number;
@@ -72,6 +75,9 @@ type CampaignAnalyticsRow = Campaign & {
   ownerEmail: string;
   impressions: bigint;
   clicks: bigint;
+  firstQuartiles: bigint;
+  midpoints: bigint;
+  thirdQuartiles: bigint;
   completions: bigint;
   lifetimeImpressions: bigint;
 };
@@ -79,6 +85,9 @@ type CampaignAnalyticsRow = Campaign & {
 interface TotalsRow {
   impressions: bigint;
   clicks: bigint;
+  firstQuartiles: bigint;
+  midpoints: bigint;
+  thirdQuartiles: bigint;
   completions: bigint;
 }
 
@@ -106,6 +115,9 @@ const toTotals = (row: TotalsRow): PerformanceTotals => {
   return {
     impressions,
     clicks,
+    firstQuartiles: Number(row.firstQuartiles),
+    midpoints: Number(row.midpoints),
+    thirdQuartiles: Number(row.thirdQuartiles),
     completions,
     ctr: ratio(clicks, impressions),
     completionRate: ratio(completions, impressions),
@@ -235,6 +247,9 @@ export class CampaignsService {
         u.email AS "ownerEmail",
         COALESCE(SUM(m.impressions) FILTER (WHERE ${inRange}), 0) AS impressions,
         COALESCE(SUM(m.clicks) FILTER (WHERE ${inRange}), 0) AS clicks,
+        COALESCE(SUM(m.first_quartiles) FILTER (WHERE ${inRange}), 0) AS "firstQuartiles",
+        COALESCE(SUM(m.midpoints) FILTER (WHERE ${inRange}), 0) AS midpoints,
+        COALESCE(SUM(m.third_quartiles) FILTER (WHERE ${inRange}), 0) AS "thirdQuartiles",
         COALESCE(SUM(m.completions) FILTER (WHERE ${inRange}), 0) AS completions,
         COALESCE(SUM(m.impressions), 0) AS "lifetimeImpressions"
       FROM campaigns c
@@ -279,6 +294,9 @@ export class CampaignsService {
         date_trunc(${unit}::text, m.bucket, 'UTC') AS time,
         SUM(m.impressions) AS impressions,
         SUM(m.clicks) AS clicks,
+        SUM(m.first_quartiles) AS "firstQuartiles",
+        SUM(m.midpoints) AS midpoints,
+        SUM(m.third_quartiles) AS "thirdQuartiles",
         SUM(m.completions) AS completions
       FROM metrics m
       JOIN campaigns c ON c.id = m.campaign_id
@@ -308,6 +326,9 @@ export class CampaignsService {
         COALESCE(m.slot::text, m.country, m.device::text, s.title) AS key,
         SUM(m.impressions) AS impressions,
         SUM(m.clicks) AS clicks,
+        SUM(m.first_quartiles) AS "firstQuartiles",
+        SUM(m.midpoints) AS midpoints,
+        SUM(m.third_quartiles) AS "thirdQuartiles",
         SUM(m.completions) AS completions
       FROM metrics m
       JOIN shows s ON s.id = m.show_id

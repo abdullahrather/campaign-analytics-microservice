@@ -13,7 +13,9 @@ import { accountRouter } from '@/modules/account/account.routes';
 import { adminRouter } from '@/modules/admin/admin.routes';
 import { authRouter } from '@/modules/auth/auth.routes';
 import { campaignsRouter } from '@/modules/campaigns/campaigns.routes';
+import { creativesRouter, mediaRouter } from '@/modules/creatives/creatives.routes';
 import { deliveryRouter } from '@/modules/delivery/delivery.routes';
+import { playbackRouter } from '@/modules/playback/playback.routes';
 import { isActive } from '@/modules/demo/activity';
 import { runTrafficTick } from '@/modules/demo/traffic';
 import { showsRouter } from '@/modules/shows/shows.routes';
@@ -658,6 +660,9 @@ describe('API docs', () => {
       ...routesOf(campaignsRouter as never, '/campaigns'),
       ...routesOf(showsRouter as never, '/shows'),
       ...routesOf(deliveryRouter as never, ''),
+      ...routesOf(creativesRouter as never, '/creatives'),
+      ...routesOf(mediaRouter as never, ''),
+      ...routesOf(playbackRouter as never, ''),
     ];
 
     expect(documented).toEqual(expect.arrayContaining(actual));

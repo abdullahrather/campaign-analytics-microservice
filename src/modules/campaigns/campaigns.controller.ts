@@ -7,6 +7,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { actorOf, contextOf } from '@/lib/http';
 import { auditService } from '@/modules/audit/audit.service';
+import { creativesService } from '@/modules/creatives/creatives.service';
 import {
   createCampaignSchema,
   dateRangeSchema,
@@ -91,6 +92,8 @@ export class CampaignsController {
   async remove(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const actor = actorOf(req);
+      await campaignsService.findOneOrFail(idOf(req), actor);
+      await creativesService.removeFilesForCampaign(idOf(req));
       const campaign = await campaignsService.deleteCampaign(idOf(req), actor);
 
       await auditService.record({

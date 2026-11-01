@@ -196,6 +196,48 @@ describe('Counting events exactly once', () => {
     expect(res.status).toBe(422);
   });
 
+  it('retries finishing a campaign when that update fails', async () => {
+    const { show, campaign } = await setup({ impressionGoal: 3 });
+    await send(Array.from({ length: 3 }, () => event(campaign.id, show.id)));
+    const client = testPrismaFromApp();
+    const original = client.$executeRaw.bind(client);
+    let failed = false;
+    const update = jest.spyOn(client, '$executeRaw').mockImplementation(((
+      query: { sql?: string },
+      ...values: unknown[]
+    ) => {
+      if (!failed && query.sql?.includes('UPDATE campaigns')) {
+        failed = true;
+        return Promise.reject(new Error('Database down'));
+      }
+      return (original as (...args: unknown[]) => unknown)(query, ...values);
+    }) as never);
+
+    await expect(drainEvents()).rejects.toThrow('Database down');
+    update.mockRestore();
+    expect(failed).toBe(true);
+    expect(await totalImpressions(campaign.id)).toBe(3);
+    await drainEvents();
+
+    const stored = await testPrisma.campaign.findUniqueOrThrow({ where: { id: campaign.id } });
+    expect(stored.status).toBe('COMPLETED');
+  });
+
+  it('still finishes a campaign when its batch is redelivered after a crash', async () => {
+    const { show, campaign } = await setup({ impressionGoal: 3 });
+    await send(Array.from({ length: 3 }, () => event(campaign.id, show.id)));
+    const pipeline = jest.spyOn(redis, 'pipeline').mockImplementationOnce(() => {
+      throw new Error('Worker died');
+    });
+
+    await expect(drainEvents()).rejects.toThrow('Worker died');
+    pipeline.mockRestore();
+    await drainEvents();
+
+    const stored = await testPrisma.campaign.findUniqueOrThrow({ where: { id: campaign.id } });
+    expect(stored.status).toBe('COMPLETED');
+  });
+
   it('completes a campaign that reaches its goal', async () => {
     const { show, campaign } = await setup({ impressionGoal: 3 });
 

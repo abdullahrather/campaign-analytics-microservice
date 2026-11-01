@@ -245,7 +245,7 @@ const completeFinishedCampaigns = async (campaignIds: string[]): Promise<void> =
 const eventsOf = ([, fields]: StreamEntry): StoredEvent[] =>
   JSON.parse(fields[1] as string) as StoredEvent[];
 
-let touchedCampaigns = new Set<string>();
+const touchedCampaigns = new Set<string>();
 let lastCompletionCheck = 0;
 let lastPrune = 0;
 
@@ -253,7 +253,12 @@ let lastPrune = 0;
 const processEntries = async (entries: StreamEntry[]): Promise<void> => {
   const ids = entries.map(([id]) => id);
 
-  const touched = await prisma.$transaction(
+  // Includes redelivered entries, whose earlier worker may have died before checking them.
+  for (const event of entries.flatMap(eventsOf)) {
+    if (!('f' in event)) touchedCampaigns.add(event.c);
+  }
+
+  await prisma.$transaction(
     async (tx) => {
       const fresh = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
         INSERT INTO processed_batches (id)
@@ -268,7 +273,6 @@ const processEntries = async (entries: StreamEntry[]): Promise<void> => {
 
       await writeRollups(tx, rollups);
       await writeFiltered(tx, filtered);
-      return rollups.map(({ campaignId }) => campaignId);
     },
     { timeout: 30_000, maxWait: 30_000 },
   );
@@ -278,7 +282,6 @@ const processEntries = async (entries: StreamEntry[]): Promise<void> => {
     .xack(STREAM, GROUP, ...ids)
     .xdel(STREAM, ...ids)
     .exec();
-  touched.forEach((id) => touchedCampaigns.add(id));
 };
 
 const runHousekeeping = async (force = false): Promise<void> => {
@@ -286,9 +289,10 @@ const runHousekeeping = async (force = false): Promise<void> => {
 
   if (force || now - lastCompletionCheck >= COMPLETION_CHECK_MS) {
     lastCompletionCheck = now;
+    // Cleared only after the update works, so a failure is retried on the next pass.
     const campaignIds = [...touchedCampaigns];
-    touchedCampaigns = new Set();
     await completeFinishedCampaigns(campaignIds);
+    campaignIds.forEach((id) => touchedCampaigns.delete(id));
   }
 
   if (now - lastPrune >= PRUNE_INTERVAL_MS) {

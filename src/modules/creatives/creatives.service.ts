@@ -18,6 +18,7 @@ import { storage } from '@/lib/storage';
 import { extractPoster, probeVideo, transcodeVideo } from '@/lib/video';
 import { AppError } from '@/middleware/errorHandler';
 import { campaignsService } from '@/modules/campaigns/campaigns.service';
+import { decisionCache } from '@/modules/delivery/decision-cache';
 import type { ReviewDto, UploadCreativeDto } from './creatives.schema';
 
 const MIN_SECONDS = 5;
@@ -198,6 +199,7 @@ class CreativesService {
     await campaignsService.findOneOrFail(creative.campaignId, actor);
 
     await prisma.creative.delete({ where: { id } });
+    decisionCache.invalidate();
     await storage.removeFolder(creativeFolder(id));
     return creative;
   }
@@ -245,6 +247,7 @@ class CreativesService {
         : new AppError(404, 'Ad not found.');
     }
 
+    decisionCache.invalidate();
     const creative = await prisma.creative.findUniqueOrThrow({ where: { id } });
     const uploader = await prisma.user.findUnique({
       where: { id: creative.createdById },

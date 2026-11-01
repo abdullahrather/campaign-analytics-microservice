@@ -13,7 +13,7 @@ import { CreativeStatus, OrganisationRole, Role } from '@prisma/client';
 import { createApp } from '@/app';
 import { storage } from '@/lib/storage';
 import { probeVideo } from '@/lib/video';
-import { deliveryService } from '@/modules/delivery/delivery.service';
+import * as eventQueue from '@/modules/delivery/event-queue';
 import { runTrafficTick } from '@/modules/demo/traffic';
 import {
   clearDatabase,
@@ -24,6 +24,7 @@ import {
 } from './helpers/db';
 
 const app = createApp();
+const BROWSER = 'Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 Chrome/120 Safari/537.36';
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'playback-test-'));
 const sample = path.join(scratch, 'sample.mp4');
 const tiny = path.join(scratch, 'tiny.mp4');
@@ -83,6 +84,11 @@ const placement = (showId: string) => ({
   country: 'DE',
   device: 'CTV',
 });
+
+const placementWithToken = async (showId: string) => {
+  const session = await request(app).post('/player/session');
+  return { ...placement(showId), token: (session.body as { data: { token: string } }).data.token };
+};
 
 const matchAll = (xml: string, tag: string): string[] =>
   [...xml.matchAll(new RegExp(`<${tag}[^>]*><!\\[CDATA\\[(.*?)\\]\\]></${tag}>`, 'g'))].map(
@@ -206,13 +212,18 @@ describe('Uploading ads', () => {
     const stranger = await createTestUser({ email: 'stranger@test.com' });
     const guest = await createTestUser({ email: 'guest@test.com', role: Role.GUEST });
     const campaign = await createTestCampaign(owner.id);
-    const analystCampaign = await createTestCampaign(analyst.id);
 
-    const byAnalyst = await upload(await login(analyst), analystCampaign.id, notVideo);
+    // Roles are refused before the body is read, so these requests don't send a file.
+    const refuse = async (user: { email: string; password: string }) =>
+      request(app)
+        .post('/creatives')
+        .set('Authorization', await login(user));
+
+    const byAnalyst = await refuse(analyst);
+    const byGuest = await refuse(guest);
     const byStranger = await upload(await login(stranger), campaign.id, notVideo);
-    const byGuest = await upload(await login(guest), campaign.id, notVideo);
 
-    expect([byAnalyst.status, byStranger.status, byGuest.status]).toEqual([403, 404, 403]);
+    expect([byAnalyst.status, byGuest.status, byStranger.status]).toEqual([403, 403, 404]);
   });
 
   it('hides another company’s ads', async () => {
@@ -357,11 +368,17 @@ describe('Serving ads through VAST', () => {
     const campaign = await createTestCampaign(owner.id, { title: 'Winter <Sale>' });
     const creative = await approvedAd(campaign.id, owner.id);
 
-    const res = await request(app).get('/vast').query(placement(show.id));
+    const res = await request(app)
+      .get('/vast')
+      .set('User-Agent', BROWSER)
+      .query(await placementWithToken(show.id));
     return { res, xml: res.text, campaign, creative, show };
   };
 
-  const metric = (campaignId: string) => testPrisma.metric.findFirst({ where: { campaignId } });
+  const metric = async (campaignId: string) => {
+    await eventQueue.drainEvents();
+    return testPrisma.metric.findFirst({ where: { campaignId } });
+  };
 
   it('returns well-formed VAST with the approved ad', async () => {
     const { res, xml, creative } = await served();
@@ -398,7 +415,10 @@ describe('Serving ads through VAST', () => {
     const campaign = await createTestCampaign(owner.id, { advertiser: 'Tom & <Jerry>' });
     await approvedAd(campaign.id, owner.id);
 
-    const { text } = await request(app).get('/vast').query(placement(show.id));
+    const { text } = await request(app)
+      .get('/vast')
+      .set('User-Agent', BROWSER)
+      .query(await placementWithToken(show.id));
 
     expect(text).toContain('Tom &amp; &lt;Jerry&gt;');
   });
@@ -413,7 +433,10 @@ describe('Serving ads through VAST', () => {
     const creative = await approvedAd(campaign.id, owner.id);
     await testPrisma.creative.update({ where: { id: creative.id }, data: { status } });
 
-    const { text } = await request(app).get('/vast').query(placement(show.id));
+    const { text } = await request(app)
+      .get('/vast')
+      .set('User-Agent', BROWSER)
+      .query(await placementWithToken(show.id));
 
     expect(text).toContain('<VAST version="4.2"/>');
   });
@@ -425,7 +448,10 @@ describe('Serving ads through VAST', () => {
     const withVideo = await createTestCampaign(owner.id, { advertiser: 'Has Video' });
     await approvedAd(withVideo.id, owner.id);
 
-    const { text } = await request(app).get('/vast').query(placement(show.id));
+    const { text } = await request(app)
+      .get('/vast')
+      .set('User-Agent', BROWSER)
+      .query(await placementWithToken(show.id));
 
     expect(text).toContain('Has Video');
   });
@@ -437,7 +463,9 @@ describe('Serving ads through VAST', () => {
     );
 
     for (const url of [...urls, ...urls]) {
-      const res = await request(app).get(url.pathname + url.search);
+      const res = await request(app)
+        .get(url.pathname + url.search)
+        .set('User-Agent', BROWSER);
       expect(res.status).toBe(204);
     }
 
@@ -454,11 +482,11 @@ describe('Serving ads through VAST', () => {
     const { xml, campaign } = await served();
     const url = new URL(matchAll(xml, 'Impression')[0] as string);
     const link = url.pathname + url.search;
-    jest.spyOn(deliveryService, 'ingest').mockRejectedValueOnce(new Error('Database down'));
+    jest.spyOn(eventQueue, 'enqueueEvents').mockRejectedValueOnce(new Error('Database down'));
     const failure = jest.spyOn(console, 'error').mockImplementation(() => undefined);
 
-    const first = await request(app).get(link);
-    const retry = await request(app).get(link);
+    const first = await request(app).get(link).set('User-Agent', BROWSER);
+    const retry = await request(app).get(link).set('User-Agent', BROWSER);
     failure.mockRestore();
 
     expect(first.status).toBe(500);
@@ -470,11 +498,11 @@ describe('Serving ads through VAST', () => {
     const { xml, campaign } = await served();
     const url = new URL(matchAll(xml, 'ClickThrough')[0] as string);
     const link = url.pathname + url.search;
-    jest.spyOn(deliveryService, 'ingest').mockRejectedValueOnce(new Error('Database down'));
+    jest.spyOn(eventQueue, 'enqueueEvents').mockRejectedValueOnce(new Error('Database down'));
     const failure = jest.spyOn(console, 'error').mockImplementation(() => undefined);
 
-    const first = await request(app).get(link);
-    const retry = await request(app).get(link);
+    const first = await request(app).get(link).set('User-Agent', BROWSER);
+    const retry = await request(app).get(link).set('User-Agent', BROWSER);
     failure.mockRestore();
 
     expect(first.status).toBe(302);
@@ -487,7 +515,9 @@ describe('Serving ads through VAST', () => {
     const { xml, campaign } = await served();
     const url = new URL(matchAll(xml, 'ClickThrough')[0] as string);
 
-    const res = await request(app).get(url.pathname + url.search);
+    const res = await request(app)
+      .get(url.pathname + url.search)
+      .set('User-Agent', BROWSER);
 
     expect(res.status).toBe(302);
     expect(res.headers['location']).toBe('https://example.com/offer');
@@ -541,6 +571,7 @@ describe('Serving ads through VAST', () => {
     const campaign = await createTestCampaign(owner.id);
 
     await runTrafficTick();
+    await eventQueue.drainEvents();
 
     const totals = await testPrisma.metric.aggregate({
       where: { campaignId: campaign.id },

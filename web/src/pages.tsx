@@ -4,6 +4,7 @@ import CampaignForm from './CampaignForm';
 import { CampaignAds } from './creatives';
 import {
   Breakdown,
+  FilteredTraffic,
   Kpis,
   PacingBadge,
   Progress,
@@ -277,6 +278,7 @@ export const CampaignPage = ({
           <CampaignAds campaignId={campaign.id} canEdit={canEdit(user)} />
           <Trends points={data.timeseries} />
           <ViewerDropOff totals={campaign} />
+          <FilteredTraffic rows={data.filtered} />
           <div className="columns">
             <Breakdown title="By ad slot" rows={data.breakdown.slot} labels={SLOT_LABELS} />
             <Breakdown title="By device" rows={data.breakdown.device} labels={DEVICE_LABELS} />

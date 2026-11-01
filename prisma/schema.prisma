@@ -289,6 +289,28 @@ model Creative {
   @@map("creatives")
 }
 
+/// Queue entries already written to metrics, so a redelivered entry changes nothing.
+model ProcessedBatch {
+  id        String   @id
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([createdAt])
+  @@map("processed_batches")
+}
+
+/// Hourly count of rejected traffic. Never counted as delivery.
+/// campaignId is empty when traffic was rejected before an ad was chosen.
+model FilteredEvent {
+  bucket     DateTime @db.Timestamptz(3)
+  campaignId String   @map("campaign_id")
+  reason     String
+  count      Int      @default(0)
+
+  @@id([bucket, campaignId, reason])
+  @@index([campaignId])
+  @@map("filtered_events")
+}
+
 /// Hourly rollup of ad events. One row per campaign, hour, show, slot, country
 /// and device, so reads stay fast however many raw events arrive.
 model Metric {

@@ -14,21 +14,24 @@ import { allowAnyOrigin, handle } from '@/lib/http';
 import { prisma } from '@/lib/prisma';
 import { storage } from '@/lib/storage';
 import { AppError } from '@/middleware/errorHandler';
+import { requireIngestKey } from '@/middleware/ingestKey';
 import {
   adDecisionQuerySchema,
+  playerTokenSchema,
   type AdDecisionQuery,
-  type AdEvent,
+  type EventType,
 } from '@/modules/delivery/delivery.schema';
 import { deliveryService } from '@/modules/delivery/delivery.service';
+import { enqueueEvents, enqueueFiltered } from '@/modules/delivery/event-queue';
+import { isBot, isExcessive, isImpossibleCompletion, type FilterReason } from './traffic-quality';
 import { buildVast, emptyVast } from './vast';
 
 const TRACKING_AUDIENCE = 'ad-tracking';
 const TRACKING_TTL = '1h';
-const MAX_REMEMBERED_EVENTS = 100_000;
+const PLAYER_AUDIENCE = 'player';
+const PLAYER_TOKEN_TTL_SECONDS = 15 * 60;
 
-type TrackedEvent = AdEvent['type'];
-
-const EVENTS: Record<string, TrackedEvent> = {
+const EVENTS: Record<string, EventType> = {
   impression: 'IMPRESSION',
   firstQuartile: 'FIRST_QUARTILE',
   midpoint: 'MIDPOINT',
@@ -39,7 +42,10 @@ const EVENTS: Record<string, TrackedEvent> = {
 interface TrackingClaims extends AdDecisionQuery {
   campaignId: string;
   creativeId: string;
+  durationSeconds: number;
+  viewerId: string;
   jti: string;
+  iat: number;
 }
 
 const playbackRouter = Router();
@@ -55,19 +61,9 @@ const playerLimiter = rateLimit({
 playbackRouter.use(['/vast', '/track', '/click', '/player'], playerLimiter);
 playbackRouter.use(['/vast', '/track', '/player'], allowAnyOrigin);
 
-// One ad view counts each event once, even if a player sends it again.
-const remembered = new Set<string>();
-
-const firstTime = (key: string): boolean => {
-  if (remembered.has(key)) return false;
-  if (remembered.size >= MAX_REMEMBERED_EVENTS) remembered.clear();
-  remembered.add(key);
-  return true;
-};
-
 const originOf = (req: Request): string => `${req.protocol}://${req.get('host') ?? 'localhost'}`;
 
-const signTracking = (claims: Omit<TrackingClaims, 'jti'>): string =>
+const signTracking = (claims: Omit<TrackingClaims, 'jti' | 'iat'>): string =>
   jwt.sign(claims, env.JWT_SECRET, {
     audience: TRACKING_AUDIENCE,
     expiresIn: TRACKING_TTL,
@@ -85,34 +81,63 @@ const readTracking = (token: unknown): TrackingClaims => {
   }
 };
 
-const record = (claims: TrackingClaims, type: TrackedEvent): Promise<unknown> =>
-  deliveryService.ingest([
+/** The event ID comes from the signed link, so a repeat of the same link counts once. */
+const record = (claims: TrackingClaims, type: EventType, name: string): Promise<unknown> =>
+  enqueueEvents([
     {
+      eventId: `${claims.jti}:${name}`,
       type,
       campaignId: claims.campaignId,
       showId: claims.showId,
       slot: claims.slot,
       country: claims.country,
       device: claims.device,
+      occurredAt: new Date(),
     },
   ]);
 
-/** Saves an event once. A failed save is forgotten, so the player's retry still counts. */
-const recordOnce = async (
-  claims: TrackingClaims,
-  type: TrackedEvent,
-  name: string,
-): Promise<void> => {
-  const key = `${claims.jti}:${name}`;
-  if (!firstTime(key)) return;
+const filterEvent = (claims: TrackingClaims, name: string, reason: FilterReason): Promise<void> =>
+  enqueueFiltered({
+    eventId: `${claims.jti}:${name}`,
+    campaignId: claims.campaignId,
+    reason,
+  });
 
+const issuePlayerToken = (viewerId: string): { token: string; expiresIn: number } => ({
+  token: jwt.sign({}, env.JWT_SECRET, {
+    subject: viewerId,
+    audience: PLAYER_AUDIENCE,
+    expiresIn: PLAYER_TOKEN_TTL_SECONDS,
+  }),
+  expiresIn: PLAYER_TOKEN_TTL_SECONDS,
+});
+
+const readPlayerToken = (token: unknown): string => {
   try {
-    await record(claims, type);
-  } catch (error) {
-    remembered.delete(key);
-    throw error;
+    if (typeof token !== 'string') throw new Error('Missing token.');
+    const { sub } = jwt.verify(token, env.JWT_SECRET, {
+      audience: PLAYER_AUDIENCE,
+    }) as jwt.JwtPayload;
+    return sub as string;
+  } catch {
+    throw new AppError(401, 'A valid player token is required.');
   }
 };
+
+/** For a publisher's server: swaps the ad server key for a short-lived player token. */
+playbackRouter.post('/player-tokens', requireIngestKey, (req, res) => {
+  const { viewerId } = playerTokenSchema.parse(req.body ?? {});
+  res.status(201).json({
+    status: 'success',
+    data: issuePlayerToken(viewerId ?? crypto.randomUUID()),
+  });
+});
+
+/** Stands in for a publisher's server on the demo site. Closed in production. */
+playbackRouter.post('/player/session', (_req, res) => {
+  if (env.NODE_ENV === 'production' && !env.DEMO_MODE) throw new AppError(404, 'Not found.');
+  res.status(201).json({ status: 'success', data: issuePlayerToken(crypto.randomUUID()) });
+});
 
 /** What the demo streaming site can play. */
 playbackRouter.get(
@@ -150,9 +175,23 @@ playbackRouter.get(
 playbackRouter.get(
   '/vast',
   handle(async (req, res) => {
+    const viewerId = readPlayerToken(req.query['token']);
     const query = adDecisionQuerySchema.parse(req.query);
-    const decision = await deliveryService.decide(query, { requireCreative: true });
     res.type('application/xml');
+
+    const reason: FilterReason | null = isBot(req.get('user-agent'))
+      ? 'BOT_USER_AGENT'
+      : (await isExcessive(viewerId))
+        ? 'EXCESSIVE_REQUESTS'
+        : null;
+
+    if (reason) {
+      await enqueueFiltered({ eventId: crypto.randomUUID(), reason });
+      res.status(200).send(emptyVast());
+      return;
+    }
+
+    const decision = await deliveryService.decide(query, { requireCreative: true });
 
     if (!decision?.creative) {
       res.status(200).send(emptyVast());
@@ -164,6 +203,8 @@ playbackRouter.get(
       ...query,
       campaignId: decision.campaignId,
       creativeId: creative.id,
+      durationSeconds: creative.durationSeconds,
+      viewerId,
     });
     const origin = originOf(req);
     const track = (event: string): string => `${origin}/track/${event}?t=${token}`;
@@ -201,7 +242,17 @@ playbackRouter.get(
     if (name !== 'start') {
       const type = EVENTS[name];
       if (!type) throw new AppError(404, 'Unknown event.');
-      await recordOnce(claims, type, name);
+
+      if (isBot(req.get('user-agent'))) {
+        await filterEvent(claims, name, 'BOT_USER_AGENT');
+      } else if (
+        name === 'complete' &&
+        isImpossibleCompletion(claims.iat, claims.durationSeconds)
+      ) {
+        await filterEvent(claims, name, 'IMPOSSIBLE_TIMING');
+      } else {
+        await record(claims, type, name);
+      }
     }
 
     res.status(204).end();
@@ -217,9 +268,10 @@ playbackRouter.get(
     if (!creative) throw new AppError(404, 'This ad is no longer available.');
 
     // A failed save shouldn't stop the viewer reaching the advertiser's page.
-    await recordOnce(claims, 'CLICK', 'click').catch((error: unknown) =>
-      console.error('Click not recorded:', String(error)),
-    );
+    const saved = isBot(req.get('user-agent'))
+      ? filterEvent(claims, 'click', 'BOT_USER_AGENT')
+      : record(claims, 'CLICK', 'click');
+    await saved.catch((error: unknown) => console.error('Click not recorded:', String(error)));
     res.redirect(302, creative.clickUrl);
   }),
 );

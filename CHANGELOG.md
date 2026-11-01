@@ -6,6 +6,23 @@ The main changes in each version. Every release's full notes are on the [Release
 
 ### Added
 
+- An event queue on Redis, with each event counted exactly once through retries and crashes
+- Hard delivery limits that hold under concurrent traffic
+- Short-lived player tokens
+- Invalid traffic filtering, reported on each campaign
+- A k6 load test that checks the database against accepted events
+
+### Changed
+
+- Redis is now required, and `npm run dev` starts it through Docker
+- Ad decisions no longer query the database
+- `POST /events` now needs an `eventId` and `occurredAt` on each event, within the last hour
+- `/vast` now needs a player token
+
+## 1.3.0
+
+### Added
+
 - Video ad upload with format checks, and conversion with FFmpeg
 - An admin review queue, so ads can't run until they're approved
 - VAST 4.2 ad serving with signed tracking links

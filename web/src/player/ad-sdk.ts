@@ -17,6 +17,8 @@ export interface VastAd {
 
 export interface AdBreakRequest {
   serverUrl: string;
+  /** A short-lived player token from the publisher's server. */
+  token: string;
   showId: string;
   slot: 'PRE_ROLL' | 'MID_ROLL' | 'POST_ROLL';
   country: string;

@@ -8,10 +8,11 @@
  * 'always' runs constantly. 'on-demand' runs only while someone is using the
  * dashboard, so an idle public demo lets its hosting and database sleep.
  */
+import crypto from 'crypto';
 import { prisma } from '@/lib/prisma';
 import { env } from '@/config/env';
 import { deliveryService } from '@/modules/delivery/delivery.service';
-import type { AdEvent } from '@/modules/delivery/delivery.schema';
+import { enqueueEvents, type QueuedEvent } from '@/modules/delivery/event-queue';
 import { AdSlot, Device } from '@prisma/client';
 import { isActive } from './activity';
 
@@ -41,7 +42,7 @@ const COMPLETION_RATE: Record<AdSlot, number> = { PRE_ROLL: 0.78, MID_ROLL: 0.93
 
 const pick = <T>(list: readonly T[]): T => list[Math.floor(Math.random() * list.length)] as T;
 
-async function serveAdBreak(showIds: string[]): Promise<AdEvent[]> {
+async function serveAdBreak(showIds: string[]): Promise<QueuedEvent[]> {
   const placement = {
     showId: pick(showIds),
     slot: pick(SLOTS),
@@ -52,8 +53,14 @@ async function serveAdBreak(showIds: string[]): Promise<AdEvent[]> {
   const decision = await deliveryService.decide(placement);
   if (!decision) return [];
 
-  const event = { ...placement, campaignId: decision.campaignId };
-  const events: AdEvent[] = [{ ...event, type: 'IMPRESSION' }];
+  const event = (type: QueuedEvent['type']): QueuedEvent => ({
+    ...placement,
+    type,
+    campaignId: decision.campaignId,
+    eventId: crypto.randomUUID(),
+    occurredAt: new Date(),
+  });
+  const events = [event('IMPRESSION')];
   const completion = COMPLETION_RATE[placement.slot];
   const stages = [
     { type: 'FIRST_QUARTILE', chance: Math.sqrt(Math.sqrt(completion)) },
@@ -65,10 +72,10 @@ async function serveAdBreak(showIds: string[]): Promise<AdEvent[]> {
   // One draw per viewer, so nobody reaches a later stage without the earlier ones.
   const reached = Math.random();
   for (const { type, chance } of stages) {
-    if (reached < chance) events.push({ ...event, type });
+    if (reached < chance) events.push(event(type));
   }
   if (Math.random() < CLICK_RATE[placement.device]) {
-    events.push({ ...event, type: 'CLICK' });
+    events.push(event('CLICK'));
   }
   return events;
 }
@@ -84,7 +91,7 @@ export async function runTrafficTick(): Promise<number> {
   );
 
   const events = breaks.flat();
-  if (events.length > 0) await deliveryService.ingest(events);
+  if (events.length > 0) await enqueueEvents(events);
   return events.length;
 }
 

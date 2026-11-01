@@ -63,6 +63,7 @@ export interface CampaignDetail {
   campaign: Campaign;
   timeseries: Point[];
   breakdown: { slot: Row[]; country: Row[]; device: Row[]; show: Row[] };
+  filtered: Array<{ reason: string; count: number }>;
 }
 
 export interface Show {
@@ -134,6 +135,8 @@ export interface AdminStats {
   campaigns: number;
   activeSessions: number;
   suspendedUsers: number;
+  eventBacklog: number;
+  filteredLastDay: number;
 }
 
 export interface AdminUser {

@@ -6,7 +6,7 @@
 
 An ad platform for a streaming service. Companies upload video ads and plan campaigns as a team, the platform decides which ad plays in each ad break, a real player shows it, every view and click is measured, and a live dashboard shows how each campaign is performing.
 
-Built with Node.js, TypeScript, Express, Prisma, PostgreSQL and FFmpeg, with a React dashboard. All brands, shows and traffic in the demo are fictional.
+Built with Node.js, TypeScript, Express, Prisma, PostgreSQL, Redis and FFmpeg, with a React dashboard. It has been load-tested at 10,000 events per second for five minutes with none lost or double-counted, including through a worker crash. See the [load test results](./docs/load-test.md). All brands, shows and traffic in the demo are fictional.
 
 ![A walkthrough of the dashboard](./docs/images/demo.gif)
 
@@ -24,7 +24,7 @@ Built with Node.js, TypeScript, Express, Prisma, PostgreSQL and FFmpeg, with a R
 
 ## Run it
 
-You need Node.js 22 or newer. Nothing else: no Docker and no database install.
+You need Node.js 22 or newer and [Docker Desktop](https://www.docker.com/products/docker-desktop/), which runs Redis. PostgreSQL and FFmpeg install with the project.
 
 ```bash
 npm install
@@ -33,7 +33,9 @@ npm run dev
 
 Open **http://localhost:5173** and choose a demo account. The demo streaming site is at **http://localhost:5173/watch**, and interactive API docs are at **http://localhost:3000/docs**. Press `Ctrl+C` to stop.
 
-The first run creates a local PostgreSQL in `.data/`, sets up the tables, and adds 30 days of demo data, including short fictional videos made with FFmpeg. Your data stays between runs. To start fresh, stop the app and delete `.data/`.
+The first run creates a local PostgreSQL in `.data/`, sets up the tables, and adds 30 days of demo data, including short fictional videos made with FFmpeg. Your data stays between runs. To start fresh, stop the app, delete `.data/`, and run `docker compose down -v`.
+
+Redis keeps running in Docker after you stop the app, so queued events are safe. To stop it, run `docker compose stop redis`.
 
 | Account | Email | Password | Sees |
 |---|---|---|---|
@@ -120,23 +122,48 @@ Real players use `/vast`, which only considers campaigns with an approved ad. `/
 - **Sessions** use a 15-minute access token held in memory, and a rotating refresh token in an httpOnly cookie. Reusing an old refresh token ends the session.
 - **Two-factor sign-in** locks for 15 minutes after five wrong codes, counted per account, and emails the owner.
 - **Uploads** are treated as untrusted: FFmpeg is limited to local files and runs without a shell, and the original is deleted after conversion.
+- **Players use 15-minute tokens.** A publisher's server exchanges its secret key for one with `POST /player-tokens`, so the key never reaches a device.
+- **Invalid traffic is filtered.** Bots, viewers requesting too many ads, and ads finished impossibly fast are removed from results and reported on the campaign's page.
 - **Player events** use signed links from the VAST response, so players hold no secret and can't report on another campaign.
 - **Permissions** are checked against the database on every request, so sign-outs, suspensions and role changes apply immediately.
 - **Secrets** are never stored in plain text: email links and recovery codes are hashed, and two-factor secrets are encrypted.
 
 ## Using it with other video players
 
-`/vast` returns standard VAST 4.2 and allows requests from any website, so any VAST-compatible player can show these ads. `web/src/player/ad-sdk.ts` is a small player SDK with no dependencies:
+`/vast` returns standard VAST 4.2 and allows requests from any website, so any VAST-compatible player can show these ads. It needs a player token. `web/src/player/ad-sdk.ts` is a small player SDK with no dependencies:
 
 ```ts
-const ad = await requestAd({ serverUrl: '/vast', showId, slot: 'PRE_ROLL', country: 'DE', device: 'CTV' });
+const ad = await requestAd({ serverUrl: '/vast', token, showId, slot: 'PRE_ROLL', country: 'DE', device: 'CTV' });
 if (ad) await playAd(videoElement, ad, { onEvent: console.log });
 ```
 
+## How events are counted
+
+Events go through a queue, so the API stays fast and a failure can't lose or repeat them:
+
+```
+ Player or ad server
+       │  each event has a unique ID
+       ▼
+ API ──▶ Redis script: drop IDs already seen, queue the rest (one atomic step)
+                                │
+                                ▼
+ Worker ──▶ PostgreSQL transaction: save the totals and the queue entry's ID together
+                                │
+                                ▼
+                     Remove the entry from the queue
+```
+
+- **A retry can't count twice.** Repeated event IDs are dropped, so sending a batch again is always safe. Events older than the one-hour duplicate window are refused.
+- **A crash can't lose events.** An entry stays on the queue until its totals are saved. If a worker dies, another picks up its work.
+- **A crash can't count twice.** The queue entry's ID is saved in the same transaction as the totals, so an entry redelivered after a crash changes nothing.
+
 ## How it stays fast
 
+- **Decisions use no database.** Running campaigns are kept in memory and live delivery counts in Redis.
+- **Limits are reserved, not checked afterwards.** Each ad is claimed in one atomic step, so a campaign can't pass its goal or budget, however many requests race.
 - **Hourly rollups.** Events are added into one row per campaign, hour, show, slot, country and device, not stored one by one. The table grows with variety, not with traffic.
-- **Batched writes.** A batch of up to 1,000 events becomes a single upsert.
+- **Batched writes.** The worker turns thousands of events into a few upserts.
 - **One query per view.** Analytics run as a single SQL statement, so more campaigns never means more database round trips.
 
 ## API
@@ -158,6 +185,7 @@ Dashboard routes need `Authorization: Bearer <token>` from login. Ad server rout
 | `GET` | `/auth/me` | Your profile and organisations |
 | `GET` | `/creatives` | List a campaign's video ads |
 | `POST` | `/creatives` | Upload a video ad |
+| `POST` | `/player-tokens` | Exchange the ad server key for a player token |
 | `GET` | `/vast` | Get an ad as VAST XML, for video players |
 | `GET` | `/track/{event}` | Report ad progress, with a signed link from the VAST |
 | `GET` | `/click` | Record a click and redirect |
@@ -175,7 +203,7 @@ Dashboard routes need `Authorization: Bearer <token>` from login. Ad server rout
 | `GET` | `/campaigns/:id/analytics` | One campaign with its trend and breakdowns |
 | `GET` | `/shows` | The show catalogue |
 | `GET` | `/ad-decision` | Choose an ad: `showId`, `slot`, `country`, `device` |
-| `POST` | `/events` | Record `IMPRESSION`, `CLICK` and `COMPLETION` events |
+| `POST` | `/events` | Queue a batch of ad events, each with an `eventId` and `occurredAt` |
 
 ## Project layout
 
@@ -201,6 +229,7 @@ web/             The React dashboard, the demo streaming site and the player SDK
 | `npm run format` | Format the code |
 | `npm run typecheck` | Check TypeScript types |
 | `npm run build` | Compile the API |
+| `npm run load:test` | Run the load test and check the totals |
 | `npm run db:seed` | Replace all data with fresh demo data |
 | `npm run db:studio` | Browse the database in Prisma Studio |
 
@@ -216,18 +245,17 @@ For a real deployment, build the `production` image target and set `DATABASE_URL
 
 ## Public demo
 
-`render.yaml` deploys a read-only demo: the app on Render's free plan, and its database on Neon's free plan. Demo mode leaves only the guest account with a known password, runs traffic only while someone is viewing, and refreshes its data when it's more than a week old. The first visit after a quiet period takes about a minute while the app wakes up.
+`render.yaml` deploys a read-only demo: the app and Redis on Render's free plans, and its database on Neon's free plan. This setup hasn't been tested with Redis. Demo mode leaves only the guest account with a known password, runs traffic only while someone is viewing, and refreshes its data when it's more than a week old. The first visit after a quiet period takes about a minute while the app wakes up.
 
 ## Known limits
 
 This is a working demonstration, not a system that has run under real load.
 
-- Sending the same batch to `/events` twice counts it twice, because those events have no IDs. Player links ignore repeats, but only until the server restarts.
 - Videos are stored on local disk and streamed by the app, with no CDN or adaptive quality. The storage layer is ready for cloud storage.
 - The demo player takes its country and device from a menu, where a real service would detect them.
-- Budgets and goals are checked as events arrive, so a campaign can slightly overshoot under heavy traffic.
-- Each ad decision adds up the campaign's delivery. Real ad traffic would need a cache in front of this.
-- `/ad-decision` and `/events` share one API key, which suits a trusted ad server, not code running on viewers' devices.
+- A reserved ad that never plays is only returned after its campaign has been quiet for two minutes, so a campaign near its limit can briefly under-deliver.
+- Dashboard totals lag slightly behind live traffic, because events pass through the queue first.
+- `/ad-decision` and `/events` share one API key, which suits a trusted ad server.
 - Sign-ups and invitations need `SMTP_URL` for real email; without it, messages stay in the local mailbox.
 
 ## Contributing

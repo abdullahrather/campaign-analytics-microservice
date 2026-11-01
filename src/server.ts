@@ -12,14 +12,19 @@ import { createApp } from './app';
 import { env } from '@/config/env';
 import { prisma } from '@/lib/prisma';
 import { creativesService } from '@/modules/creatives/creatives.service';
+import { startEventWorker } from '@/modules/delivery/event-queue';
 import { startTraffic } from '@/modules/demo/traffic';
 
 const app = createApp();
 
-const server = app.listen(env.PORT, () => {
+// A longer queue absorbs bursts of new connections at peak traffic.
+const CONNECTION_BACKLOG = 4096;
+
+const server = app.listen({ port: env.PORT, backlog: CONNECTION_BACKLOG }, () => {
   console.info(`🚀  Server running at http://localhost:${env.PORT}`);
   console.info(`📋  Environment: ${env.NODE_ENV}`);
   console.info(`🏥  Health check: http://localhost:${env.PORT}/health`);
+  if (env.RUN_EVENT_WORKER) startEventWorker();
   startTraffic();
   creativesService
     .resumeProcessing()

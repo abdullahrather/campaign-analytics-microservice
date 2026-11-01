@@ -144,12 +144,15 @@ export class CampaignsController {
       const range = dateRangeSchema.parse(req.query);
 
       const breakdown = await campaignsService.getBreakdown(id, actor, range);
+      const filtered = await campaignsService.getFiltered(id, range);
       const [[campaign], timeseries] = await Promise.all([
         campaignsService.getAnalytics(actor, range, id),
         campaignsService.getTimeseries(actor, range, id),
       ]);
 
-      res.status(200).json({ status: 'success', data: { campaign, timeseries, breakdown } });
+      res
+        .status(200)
+        .json({ status: 'success', data: { campaign, timeseries, breakdown, filtered } });
     } catch (error) {
       next(error);
     }

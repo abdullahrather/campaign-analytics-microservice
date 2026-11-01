@@ -4,7 +4,7 @@ Thanks for your interest. Bug reports, ideas and pull requests are all welcome.
 
 ## Getting started
 
-You need Node.js 22 or newer.
+You need Node.js 22 or newer and Docker Desktop, which runs Redis.
 
 ```bash
 npm install
@@ -25,7 +25,7 @@ npm test
 npm run typecheck --prefix web
 ```
 
-`npm test` runs against a real PostgreSQL that starts automatically, separate from your development data.
+`npm test` runs against real PostgreSQL and Redis, which start automatically and stay separate from your development data.
 
 ## Guidelines
 

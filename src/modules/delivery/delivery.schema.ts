@@ -5,8 +5,8 @@
  */
 import { z } from 'zod';
 import { AdSlot, Device } from '@prisma/client';
+import { env } from '@/config/env';
 
-const MAX_EVENT_AGE_MS = 7 * 86_400_000;
 const MAX_CLOCK_SKEW_MS = 5 * 60_000;
 
 const placement = {
@@ -20,31 +20,39 @@ export const adDecisionQuerySchema = z.object(placement);
 
 export type AdDecisionQuery = z.infer<typeof adDecisionQuerySchema>;
 
+export const EVENT_TYPES = [
+  'IMPRESSION',
+  'FIRST_QUARTILE',
+  'MIDPOINT',
+  'THIRD_QUARTILE',
+  'COMPLETION',
+  'CLICK',
+] as const;
+
+export type EventType = (typeof EVENT_TYPES)[number];
+
 const eventSchema = z.object({
   ...placement,
-  type: z.enum([
-    'IMPRESSION',
-    'FIRST_QUARTILE',
-    'MIDPOINT',
-    'THIRD_QUARTILE',
-    'COMPLETION',
-    'CLICK',
-  ]),
+  // The ID makes a retry safe: an event that was already counted is dropped.
+  eventId: z.string({ error: 'Each event needs an eventId.' }).min(8).max(64),
+  type: z.enum(EVENT_TYPES),
   campaignId: z.string().min(1),
-  occurredAt: z.coerce
-    .date()
-    .refine(
-      (date) => {
-        const age = Date.now() - date.getTime();
-        return age < MAX_EVENT_AGE_MS && age > -MAX_CLOCK_SKEW_MS;
-      },
-      { error: 'Events must be from the last 7 days.' },
-    )
-    .optional(),
+  // Replays are only detectable inside the duplicate window, so older events are refused.
+  occurredAt: z.coerce.date({ error: 'Each event needs occurredAt.' }).refine(
+    (date) => {
+      const age = Date.now() - date.getTime();
+      return age < env.EVENT_DEDUPE_SECONDS * 1000 && age > -MAX_CLOCK_SKEW_MS;
+    },
+    { error: 'This event is too old, or dated in the future.' },
+  ),
 });
 
 export const eventBatchSchema = z.object({
   events: z.array(eventSchema).min(1).max(1000),
+});
+
+export const playerTokenSchema = z.object({
+  viewerId: z.string().min(1).max(64).optional(),
 });
 
 export type AdEvent = z.infer<typeof eventSchema>;

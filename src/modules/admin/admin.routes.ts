@@ -13,6 +13,7 @@ import { AppError } from '@/middleware/errorHandler';
 import { auditService } from '@/modules/audit/audit.service';
 import { reviewQueueSchema, reviewSchema } from '@/modules/creatives/creatives.schema';
 import { creativesService } from '@/modules/creatives/creatives.service';
+import { queueDepth } from '@/modules/delivery/event-queue';
 import { sessionService } from '@/modules/auth/session.service';
 import { auditQuerySchema } from '@/modules/team/team.schema';
 
@@ -50,9 +51,25 @@ adminRouter.get(
         prisma.user.count({ where: { suspendedAt: { not: null } } }),
       ]);
 
+    const [eventBacklog, filtered] = await Promise.all([
+      queueDepth(),
+      prisma.filteredEvent.aggregate({
+        where: { bucket: { gte: new Date(Date.now() - 86_400_000) } },
+        _sum: { count: true },
+      }),
+    ]);
+
     res.status(200).json({
       status: 'success',
-      data: { users, organisations, campaigns, activeSessions, suspendedUsers },
+      data: {
+        users,
+        organisations,
+        campaigns,
+        activeSessions,
+        suspendedUsers,
+        eventBacklog,
+        filteredLastDay: filtered._sum.count ?? 0,
+      },
     });
   }),
 );

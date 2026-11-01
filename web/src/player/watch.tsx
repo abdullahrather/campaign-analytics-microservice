@@ -35,6 +35,20 @@ const EVENT_NAMES: Record<string, string> = {
   complete: 'Watched to the end',
 };
 
+/** A real site would get this from its own server, which holds the ad server key. */
+let session: { token: string; expiresAt: number } | null = null;
+
+const playerToken = async (): Promise<string> => {
+  if (session && Date.now() < session.expiresAt) return session.token;
+
+  const response = await fetch('/player/session', { method: 'POST' });
+  if (!response.ok) throw new Error('Ads are not available on this site.');
+
+  const { data } = (await response.json()) as { data: { token: string; expiresIn: number } };
+  session = { token: data.token, expiresAt: Date.now() + (data.expiresIn - 30) * 1000 };
+  return data.token;
+};
+
 const Watch = ({ show, onBack }: { show: Show; onBack: () => void }) => {
   const episode = useRef<HTMLVideoElement>(null);
   const adVideo = useRef<HTMLVideoElement>(null);
@@ -65,6 +79,7 @@ const Watch = ({ show, onBack }: { show: Show; onBack: () => void }) => {
     try {
       const ad = await requestAd({
         serverUrl: '/vast',
+        token: await playerToken(),
         showId: show.id,
         slot,
         country,

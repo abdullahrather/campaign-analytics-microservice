@@ -15,6 +15,7 @@ import {
 } from '@prisma/client';
 import type { Campaign, Prisma } from '@prisma/client';
 import bcrypt from 'bcryptjs';
+import { redis } from '@/lib/redis';
 
 // Create a separate client for tests — avoids interfering with the app's singleton
 export const testPrisma = new PrismaClient({
@@ -23,6 +24,9 @@ export const testPrisma = new PrismaClient({
 
 /** Wipes all data in dependency order */
 export async function clearDatabase(): Promise<void> {
+  await redis.flushdb();
+  await testPrisma.processedBatch.deleteMany();
+  await testPrisma.filteredEvent.deleteMany();
   await testPrisma.metric.deleteMany();
   await testPrisma.campaign.deleteMany();
   await testPrisma.show.deleteMany();

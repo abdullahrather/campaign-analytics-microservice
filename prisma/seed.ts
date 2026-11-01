@@ -13,12 +13,21 @@ import {
   Role,
   OrganisationRole,
   CampaignStatus,
+  CreativeStatus,
   AdSlot,
   Device,
 } from '@prisma/client';
 import type { Prisma } from '@prisma/client';
 import { randomBytes } from 'crypto';
 import bcrypt from 'bcryptjs';
+import {
+  AD_LENGTH,
+  EPISODE_LENGTH,
+  clearDemoMedia,
+  makeDemoVideos,
+  mediaFileSize,
+  type DemoVideo,
+} from './demo-media';
 
 const prisma = new PrismaClient();
 
@@ -153,6 +162,106 @@ const createRandom = (seed: number) => (): number => {
 const audienceAt = (hour: number): number =>
   0.12 + Math.exp(-((hour - 20.5) ** 2) / 8) + 0.3 * Math.exp(-((hour - 12.5) ** 2) / 6);
 
+const SHOW_COLOURS: Array<[string, string]> = [
+  ['0x10324f', '0x1f6f8b'],
+  ['0x2b1f3d', '0x6a3d8f'],
+  ['0x4a2410', '0xb5651d'],
+  ['0x0f3d2e', '0x2e8b57'],
+  ['0x1b2a49', '0x465881'],
+  ['0x5b1e3c', '0xc2477f'],
+];
+
+const AD_COLOURS: Array<[string, string]> = [
+  ['0x1c5cab', '0x3987e5'],
+  ['0xb5401a', '0xeb6834'],
+  ['0x0f7a56', '0x1baf7a'],
+  ['0x8a5b00', '0xeda100'],
+  ['0x3f2fa3', '0x6250d6'],
+  ['0x9c2f2f', '0xe34948'],
+];
+
+interface DemoAd {
+  campaignId: string;
+  advertiser: string;
+  title: string;
+  userId: string;
+}
+
+/** Makes the videos, then links them to shows and approved ads. One waits for review. */
+async function createDemoMedia(
+  shows: Array<{ id: string; title: string; genre: string }>,
+  ads: DemoAd[],
+): Promise<void> {
+  console.info('Making demo videos...');
+  await clearDemoMedia();
+
+  const videos: DemoVideo[] = shows.map((show, index) => ({
+    key: `shows/${show.id}/episode.mp4`,
+    title: show.title,
+    subtitle: `${show.genre} - Episode 1`,
+    colours: SHOW_COLOURS[index % SHOW_COLOURS.length] as [string, string],
+    seconds: EPISODE_LENGTH,
+    tone: 110,
+  }));
+
+  const adRows = ads.flatMap((ad, index) => {
+    const entries = [{ ...ad, label: ad.title, status: CreativeStatus.APPROVED }];
+    if (index === 0) {
+      entries.push({
+        ...ad,
+        label: `${ad.title} (short cut)`,
+        status: CreativeStatus.PENDING_REVIEW,
+      });
+    }
+    return entries;
+  });
+
+  const creatives = adRows.map((ad, index) => ({
+    ...ad,
+    id: `demo-ad-${index + 1}`,
+    colours: AD_COLOURS[index % AD_COLOURS.length] as [string, string],
+  }));
+
+  videos.push(
+    ...creatives.map((ad) => ({
+      key: `creatives/${ad.id}/video.mp4`,
+      title: ad.advertiser,
+      subtitle: `${ad.label} - fictional ad`,
+      colours: ad.colours,
+      seconds: AD_LENGTH,
+      tone: 220,
+    })),
+  );
+
+  await makeDemoVideos(videos);
+
+  await Promise.all(
+    shows.map((show) =>
+      prisma.show.update({
+        where: { id: show.id },
+        data: { videoKey: `shows/${show.id}/episode.mp4` },
+      }),
+    ),
+  );
+
+  await prisma.creative.createMany({
+    data: creatives.map((ad) => ({
+      id: ad.id,
+      campaignId: ad.campaignId,
+      createdById: ad.userId,
+      name: ad.label,
+      clickUrl: 'https://example.com/offer',
+      status: ad.status,
+      videoKey: `creatives/${ad.id}/video.mp4`,
+      posterKey: `creatives/${ad.id}/poster.jpg`,
+      durationSeconds: AD_LENGTH,
+      width: 854,
+      height: 480,
+      sizeBytes: mediaFileSize(`creatives/${ad.id}/video.mp4`),
+    })),
+  });
+}
+
 async function main(): Promise<void> {
   const isDemo = process.env['DEMO_MODE'] === 'true';
   if (process.env['NODE_ENV'] === 'production' && !isDemo) {
@@ -244,6 +353,8 @@ async function main(): Promise<void> {
 
   await prisma.show.createMany({ data: SHOWS });
   const shows = await prisma.show.findMany();
+  const demoAds: Array<{ campaignId: string; advertiser: string; title: string; userId: string }> =
+    [];
 
   const random = createRandom(42);
   const now = Date.now();
@@ -270,6 +381,13 @@ async function main(): Promise<void> {
         targetDevices: spec.devices,
         targetSlots: spec.slots,
       },
+    });
+
+    demoAds.push({
+      campaignId: campaign.id,
+      advertiser: spec.advertiser,
+      title: spec.title,
+      userId: campaign.userId,
     });
 
     const eligibleShows = shows.filter(
@@ -315,6 +433,11 @@ async function main(): Promise<void> {
         };
         row.impressions = (row.impressions ?? 0) + impressions;
         row.clicks = (row.clicks ?? 0) + Math.round(impressions * CLICK_RATE[device]);
+        const finished = COMPLETION_RATE[slot];
+        row.firstQuartiles =
+          (row.firstQuartiles ?? 0) + Math.round(impressions * Math.sqrt(Math.sqrt(finished)));
+        row.midpoints = (row.midpoints ?? 0) + Math.round(impressions * Math.sqrt(finished));
+        row.thirdQuartiles = (row.thirdQuartiles ?? 0) + Math.round(impressions * finished ** 0.75);
         row.completions = (row.completions ?? 0) + Math.round(impressions * COMPLETION_RATE[slot]);
         merged.set(key, row);
       }
@@ -326,6 +449,8 @@ async function main(): Promise<void> {
   for (let start = 0; start < rows.length; start += 5000) {
     await prisma.metric.createMany({ data: rows.slice(start, start + 5000) });
   }
+
+  if (!isDemo) await createDemoMedia(shows, demoAds);
 
   console.info(`Created ${CAMPAIGNS.length} campaigns and ${rows.length} hourly metric rows.`);
 }

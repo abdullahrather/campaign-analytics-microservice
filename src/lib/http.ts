@@ -14,6 +14,13 @@ export const handle =
     handler(req, res).catch(next);
   };
 
+/** For public player routes: any site's video player may use them. */
+export const allowAnyOrigin: RequestHandler = (_req, res, next) => {
+  res.set('Access-Control-Allow-Origin', '*');
+  res.set('Cross-Origin-Resource-Policy', 'cross-origin');
+  next();
+};
+
 export const actorOf = (req: Request): Actor => {
   if (!req.user) throw new AppError(401, 'Unauthenticated.');
   return req.user;

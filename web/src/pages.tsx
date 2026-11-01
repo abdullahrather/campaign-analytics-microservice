@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { api, type Campaign, type User } from './api';
 import CampaignForm from './CampaignForm';
+import { CampaignAds } from './creatives';
 import {
   Breakdown,
   Kpis,
@@ -9,6 +10,7 @@ import {
   RangePicker,
   StatusBadge,
   Trends,
+  ViewerDropOff,
   sumTotals,
 } from './components';
 import {
@@ -272,7 +274,9 @@ export const CampaignPage = ({
             <Delivery campaign={campaign} />
             <Facts campaign={campaign} />
           </div>
+          <CampaignAds campaignId={campaign.id} canEdit={canEdit(user)} />
           <Trends points={data.timeseries} />
+          <ViewerDropOff totals={campaign} />
           <div className="columns">
             <Breakdown title="By ad slot" rows={data.breakdown.slot} labels={SLOT_LABELS} />
             <Breakdown title="By device" rows={data.breakdown.device} labels={DEVICE_LABELS} />

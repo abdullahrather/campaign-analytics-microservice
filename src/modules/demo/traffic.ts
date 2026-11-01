@@ -54,8 +54,18 @@ async function serveAdBreak(showIds: string[]): Promise<AdEvent[]> {
 
   const event = { ...placement, campaignId: decision.campaignId };
   const events: AdEvent[] = [{ ...event, type: 'IMPRESSION' }];
-  if (Math.random() < COMPLETION_RATE[placement.slot]) {
-    events.push({ ...event, type: 'COMPLETION' });
+  const completion = COMPLETION_RATE[placement.slot];
+  const stages = [
+    { type: 'FIRST_QUARTILE', chance: Math.sqrt(Math.sqrt(completion)) },
+    { type: 'MIDPOINT', chance: Math.sqrt(completion) },
+    { type: 'THIRD_QUARTILE', chance: completion ** 0.75 },
+    { type: 'COMPLETION', chance: completion },
+  ] as const;
+
+  // One draw per viewer, so nobody reaches a later stage without the earlier ones.
+  const reached = Math.random();
+  for (const { type, chance } of stages) {
+    if (reached < chance) events.push({ ...event, type });
   }
   if (Math.random() < CLICK_RATE[placement.device]) {
     events.push({ ...event, type: 'CLICK' });

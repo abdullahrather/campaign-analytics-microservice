@@ -12,6 +12,7 @@ import {
   updateProfileSchema,
 } from '@/modules/account/account.routes';
 import { suspendSchema } from '@/modules/admin/admin.routes';
+import { reviewSchema, uploadCreativeSchema } from '@/modules/creatives/creatives.schema';
 import {
   emailSchema,
   loginSchema,
@@ -114,6 +115,8 @@ export const openApiDocument = {
     { name: 'Campaigns', description: 'Managing campaigns' },
     { name: 'Analytics', description: 'Measuring performance' },
     { name: 'Catalogue', description: 'Shows that ads can run against' },
+    { name: 'Creatives', description: 'Video ads and their review' },
+    { name: 'Playback', description: 'Public endpoints used by video players' },
     { name: 'Ad server', description: 'Used by the ad server or player, with an API key' },
   ],
   paths: {
@@ -480,6 +483,127 @@ export const openApiDocument = {
         responses: responses('200', 'Campaign analytics', '401', '404', '422'),
       },
     },
+    '/creatives': {
+      get: {
+        ...dashboard('Creatives'),
+        summary: "List a campaign's video ads",
+        parameters: [query('campaignId', 'Campaign ID', true)],
+        responses: responses('200', 'Ads', '401', '404', '422'),
+      },
+      post: {
+        ...dashboard('Creatives'),
+        summary: 'Upload a video ad',
+        description:
+          'Send multipart form data with a `file` field. Ads last 5 to 120 seconds, are at ' +
+          'least 240 pixels tall, are converted in the background, and need admin approval.',
+        requestBody: {
+          required: true,
+          content: {
+            'multipart/form-data': {
+              schema: {
+                type: 'object',
+                required: ['file', 'campaignId', 'name', 'clickUrl'],
+                properties: {
+                  file: { type: 'string', format: 'binary' },
+                  ...(toSchema(uploadCreativeSchema) as { properties: object }).properties,
+                },
+              },
+            },
+          },
+        },
+        responses: responses('201', 'Uploaded', '401', '403', '404', '413', '422'),
+      },
+    },
+    '/creatives/{id}': {
+      delete: {
+        ...dashboard('Creatives'),
+        summary: 'Delete a video ad',
+        parameters: [pathId('id', 'Ad ID')],
+        responses: responses('204', 'Deleted', '401', '403', '404'),
+      },
+    },
+    '/admin/creatives': {
+      get: {
+        ...dashboard('Admin'),
+        summary: 'List ads waiting for review',
+        parameters: [query('status', 'Defaults to PENDING_REVIEW')],
+        responses: responses('200', 'Ads', '401', '403', '422'),
+      },
+    },
+    '/admin/creatives/{id}/review': {
+      post: {
+        ...dashboard('Admin'),
+        summary: 'Approve or reject an ad',
+        parameters: [pathId('id', 'Ad ID')],
+        requestBody: jsonBody(reviewSchema),
+        responses: responses('204', 'Decided', '401', '403', '404', '409', '422'),
+      },
+    },
+    '/media/creatives/{id}/video': {
+      get: {
+        tags: ['Playback'],
+        summary: 'Stream an ad video',
+        description: 'Approved ads are public. Others need the preview token from the API.',
+        parameters: [pathId('id', 'Ad ID'), query('t', 'Preview token')],
+        responses: responses('200', 'Video', '404'),
+      },
+    },
+    '/media/creatives/{id}/poster': {
+      get: {
+        tags: ['Playback'],
+        summary: 'Get an ad preview image',
+        parameters: [pathId('id', 'Ad ID'), query('t', 'Preview token')],
+        responses: responses('200', 'Image', '404'),
+      },
+    },
+    '/media/shows/{id}/{file}': {
+      get: {
+        tags: ['Playback'],
+        summary: 'Stream a demo episode or its poster',
+        parameters: [pathId('id', 'Show ID'), pathId('file', 'video or poster')],
+        responses: responses('200', 'File', '404'),
+      },
+    },
+    '/player/catalogue': {
+      get: {
+        tags: ['Playback'],
+        summary: 'List shows the demo site can play',
+        responses: responses('200', 'Shows'),
+      },
+    },
+    '/vast': {
+      get: {
+        tags: ['Playback'],
+        summary: 'Get an ad for an ad break as VAST 4.2 XML',
+        description: 'An empty VAST document means nothing can run in this break.',
+        parameters: [
+          query('showId', 'Show ID', true),
+          query('slot', 'PRE_ROLL, MID_ROLL or POST_ROLL', true),
+          query('country', 'Two-letter country code', true),
+          query('device', 'CTV, MOBILE, WEB or TABLET', true),
+        ],
+        responses: responses('200', 'VAST XML', '422'),
+      },
+    },
+    '/track/{event}': {
+      get: {
+        tags: ['Playback'],
+        summary: 'Report ad progress, using a link from the VAST',
+        parameters: [
+          pathId('event', 'impression, start, firstQuartile, midpoint, thirdQuartile or complete'),
+          query('t', 'Signed token', true),
+        ],
+        responses: responses('204', 'Recorded', '400', '404'),
+      },
+    },
+    '/click': {
+      get: {
+        tags: ['Playback'],
+        summary: "Record a click and redirect to the advertiser's page",
+        parameters: [query('t', 'Signed token', true)],
+        responses: { 302: { description: 'Redirect' }, 400: { description: 'Invalid link' } },
+      },
+    },
     '/shows': {
       get: {
         ...dashboard('Catalogue'),
@@ -522,6 +646,7 @@ export const openApiDocument = {
       403: { description: 'Your role or account does not allow this' },
       404: { description: 'Not found, or belongs to another advertiser' },
       409: { description: 'Not allowed in the current state' },
+      413: { description: 'The file is too large' },
       422: { description: 'The request failed validation' },
       429: { description: 'Too many attempts' },
     },

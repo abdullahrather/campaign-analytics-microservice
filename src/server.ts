@@ -11,6 +11,7 @@
 import { createApp } from './app';
 import { env } from '@/config/env';
 import { prisma } from '@/lib/prisma';
+import { creativesService } from '@/modules/creatives/creatives.service';
 import { startTraffic } from '@/modules/demo/traffic';
 
 const app = createApp();
@@ -20,6 +21,9 @@ const server = app.listen(env.PORT, () => {
   console.info(`📋  Environment: ${env.NODE_ENV}`);
   console.info(`🏥  Health check: http://localhost:${env.PORT}/health`);
   startTraffic();
+  creativesService
+    .resumeProcessing()
+    .catch((error: unknown) => console.error('Ad conversions:', String(error)));
 });
 
 // ── Graceful Shutdown ─────────────────────────────────────────────────────────

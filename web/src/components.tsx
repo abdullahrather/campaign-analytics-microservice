@@ -279,6 +279,45 @@ export const Breakdown = ({
   );
 };
 
+/** How far viewers get through an ad, as a share of everyone who started it. */
+export const ViewerDropOff = ({ totals }: { totals: Totals }) => {
+  const stages = [
+    ['Started', totals.impressions],
+    ['Reached 25%', totals.firstQuartiles],
+    ['Reached 50%', totals.midpoints],
+    ['Reached 75%', totals.thirdQuartiles],
+    ['Watched to the end', totals.completions],
+  ] as const;
+
+  return (
+    <section className="card">
+      <h2>How far viewers watch</h2>
+      {totals.impressions === 0 ? (
+        <p className="empty">No delivery in this period.</p>
+      ) : (
+        <ul className="bars">
+          {stages.map(([label, value]) => (
+            <li key={label}>
+              <div className="bar-label">
+                <span>{label}</span>
+                <span className="bar-value">
+                  {formatCompact(value)} · {formatPercent(value / totals.impressions, 0)}
+                </span>
+              </div>
+              <div className="bar-track">
+                <div
+                  className="bar-fill"
+                  style={{ width: `${(value / totals.impressions) * 100}%` }}
+                />
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+};
+
 export const Progress = ({ label, rate }: { label: string; rate: number }) => (
   <div
     className="progress"
@@ -295,10 +334,16 @@ export const Progress = ({ label, rate }: { label: string; rate: number }) => (
 export const sumTotals = (campaigns: Campaign[]): Totals & { spendCents: number } => {
   const impressions = campaigns.reduce((sum, c) => sum + c.impressions, 0);
   const clicks = campaigns.reduce((sum, c) => sum + c.clicks, 0);
+  const firstQuartiles = campaigns.reduce((sum, c) => sum + c.firstQuartiles, 0);
+  const midpoints = campaigns.reduce((sum, c) => sum + c.midpoints, 0);
+  const thirdQuartiles = campaigns.reduce((sum, c) => sum + c.thirdQuartiles, 0);
   const completions = campaigns.reduce((sum, c) => sum + c.completions, 0);
   return {
     impressions,
     clicks,
+    firstQuartiles,
+    midpoints,
+    thirdQuartiles,
     completions,
     ctr: impressions ? clicks / impressions : 0,
     completionRate: impressions ? completions / impressions : 0,

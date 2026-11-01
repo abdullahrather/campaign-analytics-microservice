@@ -11,6 +11,8 @@ import { prisma } from '@/lib/prisma';
 import { authenticate, requirePlatformAdmin } from '@/middleware/authenticate';
 import { AppError } from '@/middleware/errorHandler';
 import { auditService } from '@/modules/audit/audit.service';
+import { reviewQueueSchema, reviewSchema } from '@/modules/creatives/creatives.schema';
+import { creativesService } from '@/modules/creatives/creatives.service';
 import { sessionService } from '@/modules/auth/session.service';
 import { auditQuerySchema } from '@/modules/team/team.schema';
 
@@ -162,6 +164,33 @@ adminRouter.patch(
       organisationId: id,
       targetType: 'organisation',
       targetId: id,
+      ipAddress: contextOf(req).ipAddress,
+    });
+    res.status(204).end();
+  }),
+);
+
+adminRouter.get(
+  '/creatives',
+  handle(async (req, res) => {
+    const { status } = reviewQueueSchema.parse(req.query);
+    res.status(200).json({ status: 'success', data: await creativesService.queue(status) });
+  }),
+);
+
+adminRouter.post(
+  '/creatives/:id/review',
+  handle(async (req, res) => {
+    const actor = actorOf(req);
+    const dto = reviewSchema.parse(req.body);
+    const creative = await creativesService.review(actor, req.params['id'] as string, dto);
+
+    await auditService.record({
+      action: dto.decision === 'APPROVE' ? 'creative.approved' : 'creative.rejected',
+      actorId: actor.sub,
+      targetType: 'creative',
+      targetId: creative.id,
+      details: { name: creative.name },
       ipAddress: contextOf(req).ipAddress,
     });
     res.status(204).end();

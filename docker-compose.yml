@@ -32,6 +32,8 @@ services:
       APP_URL: http://localhost:${PORT:-3000}
     ports:
       - '${PORT:-3000}:3000'
+    volumes:
+      - media_data:/app/.data/media
     depends_on:
       db:
         condition: service_healthy
@@ -39,4 +41,6 @@ services:
 
 volumes:
   postgres_data:
+    driver: local
+  media_data:
     driver: local

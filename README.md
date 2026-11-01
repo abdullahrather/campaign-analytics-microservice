@@ -4,15 +4,19 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Release](https://img.shields.io/github/v/release/abdullahrather/streaming-ad-platform)](https://github.com/abdullahrather/streaming-ad-platform/releases)
 
-An ad platform for a streaming service. Companies plan campaigns as a team, the platform decides which ad plays in each ad break, every view and click is measured, and a live dashboard shows how each campaign is performing.
+An ad platform for a streaming service. Companies upload video ads and plan campaigns as a team, the platform decides which ad plays in each ad break, a real player shows it, every view and click is measured, and a live dashboard shows how each campaign is performing.
 
-Built with Node.js, TypeScript, Express, Prisma and PostgreSQL, with a React dashboard. All brands, shows and traffic in the demo are fictional.
+Built with Node.js, TypeScript, Express, Prisma, PostgreSQL and FFmpeg, with a React dashboard. All brands, shows and traffic in the demo are fictional.
 
 ![A walkthrough of the dashboard](./docs/images/demo.gif)
 
 | Campaign detail | Interactive API docs |
 |---|---|
 | ![One campaign with delivery, trends and breakdowns](./docs/images/campaign-dark.png) | ![API docs](./docs/images/api-docs.png) |
+
+| Demo streaming site | Ad review |
+|---|---|
+| ![An ad playing in the demo player, with its live event log](./docs/images/player.png) | ![Admins approve ads before they can run](./docs/images/ad-review.png) |
 
 | Team management | Admin console |
 |---|---|
@@ -27,9 +31,9 @@ npm install
 npm run dev
 ```
 
-Open **http://localhost:5173** and choose a demo account. Interactive API docs are at **http://localhost:3000/docs**. Press `Ctrl+C` to stop.
+Open **http://localhost:5173** and choose a demo account. The demo streaming site is at **http://localhost:5173/watch**, and interactive API docs are at **http://localhost:3000/docs**. Press `Ctrl+C` to stop.
 
-The first run creates a local PostgreSQL in `.data/`, sets up the tables, and adds 30 days of demo data. Your data stays between runs. To start fresh, stop the app and delete `.data/`.
+The first run creates a local PostgreSQL in `.data/`, sets up the tables, and adds 30 days of demo data, including short fictional videos made with FFmpeg. Your data stays between runs. To start fresh, stop the app and delete `.data/`.
 
 | Account | Email | Password | Sees |
 |---|---|---|---|
@@ -64,6 +68,16 @@ The app includes demo traffic that plays the part of the viewers, so the numbers
 
 **Things to try:** create a campaign targeting one country and watch it start delivering within seconds. Pause it and see the numbers stop. Compare Connected TV with Mobile on a campaign's page.
 
+### From upload to playback
+
+1. **Upload.** A manager uploads a video to a campaign. Files that aren't real videos, last under 5 or over 120 seconds, or are too small are refused straight away.
+2. **Convert.** FFmpeg turns the upload into web-friendly H.264 in the background, with a preview image.
+3. **Review.** A platform admin watches it on the **Ad review** page and approves or rejects it. The uploader is told by email. Until then the video stays private.
+4. **Play.** Open the demo site and press play. Ads run before, during and after the episode, and a side panel shows each event the player reports.
+5. **Measure.** Impressions, the 25%, 50% and 75% marks, completions and clicks reach the campaign's page, including a chart of how far viewers watch.
+
+Run with `SIMULATE=0` to turn off demo traffic, and the dashboard shows only what you played yourself.
+
 ### The terms on the dashboard
 
 | Term | Meaning |
@@ -72,6 +86,9 @@ The app includes demo traffic that plays the part of the viewers, so the numbers
 | **Click-through rate (CTR)** | The share of impressions that were clicked. TV is low because viewers rarely can. |
 | **Ads watched to the end** | The share of ads that played to completion. Mid-roll is highest: viewers want the show back. |
 | **CPM** | The price per 1,000 impressions. |
+| **Creative** | The video ad itself. A campaign can have several, and one is picked at random. |
+| **VAST** | The ad industry's standard XML format, which tells a video player what to play and where to report. |
+| **Quartile** | The 25%, 50% and 75% points of an ad, used to see where viewers stop watching. |
 | **Ad slot** | Pre-roll (before the episode), mid-roll (during) or post-roll (after). |
 | **Flight** | The dates a campaign runs. |
 | **Impression goal** | The number of impressions the advertiser bought. |
@@ -95,13 +112,26 @@ Emails appear in the **local mailbox** at `/#/mailbox`, so all of this works wit
 
 For each ad break, `/ad-decision` keeps campaigns that are active, inside their dates, under their goal and budget, and matching the country, device, slot and show genre. It then picks the one furthest behind schedule, with the higher CPM winning ties. A campaign is marked completed when it reaches its goal or budget, or passes its end date.
 
+Real players use `/vast`, which only considers campaigns with an approved ad. `/ad-decision` also includes campaigns without one, which lets ad servers and demo traffic run on numbers alone.
+
 ## How it stays secure
 
 - **Passwords** are hashed with bcrypt. Sign-in, sign-up and password reset respond the same way whether or not an account exists.
 - **Sessions** use a 15-minute access token held in memory, and a rotating refresh token in an httpOnly cookie. Reusing an old refresh token ends the session.
 - **Two-factor sign-in** locks for 15 minutes after five wrong codes, counted per account, and emails the owner.
+- **Uploads** are treated as untrusted: FFmpeg is limited to local files and runs without a shell, and the original is deleted after conversion.
+- **Player events** use signed links from the VAST response, so players hold no secret and can't report on another campaign.
 - **Permissions** are checked against the database on every request, so sign-outs, suspensions and role changes apply immediately.
 - **Secrets** are never stored in plain text: email links and recovery codes are hashed, and two-factor secrets are encrypted.
+
+## Using it with other video players
+
+`/vast` returns standard VAST 4.2 and allows requests from any website, so any VAST-compatible player can show these ads. `web/src/player/ad-sdk.ts` is a small player SDK with no dependencies:
+
+```ts
+const ad = await requestAd({ serverUrl: '/vast', showId, slot: 'PRE_ROLL', country: 'DE', device: 'CTV' });
+if (ad) await playAd(videoElement, ad, { onEvent: console.log });
+```
 
 ## How it stays fast
 
@@ -126,6 +156,12 @@ Dashboard routes need `Authorization: Bearer <token>` from login. Ad server rout
 | `POST` | `/auth/refresh` | Replace an expired access token |
 | `POST` | `/auth/forgot-password` | Send a reset link |
 | `GET` | `/auth/me` | Your profile and organisations |
+| `GET` | `/creatives` | List a campaign's video ads |
+| `POST` | `/creatives` | Upload a video ad |
+| `GET` | `/vast` | Get an ad as VAST XML, for video players |
+| `GET` | `/track/{event}` | Report ad progress, with a signed link from the VAST |
+| `GET` | `/click` | Record a click and redirect |
+| `GET` | `/player/catalogue` | Shows the demo site can play |
 | | `/account/*` | Password, devices and two-factor settings |
 | | `/team/*` | Members, invitations and activity |
 | | `/admin/*` | The admin console |
@@ -146,10 +182,12 @@ Dashboard routes need `Authorization: Bearer <token>` from login. Ad server rout
 ```
 prisma/          Database schema, migrations and demo data
 scripts/         Local database and dev startup
-src/modules/     account, admin, audit, auth, campaigns, delivery, demo, dev, docs, shows, team
+src/lib/         Storage, video conversion, email, security
+src/modules/     account, admin, audit, auth, campaigns, creatives, delivery, demo, dev, docs,
+                 playback, shows, team
 src/middleware/  Sign-in and permission guards, API key guard, error handling
 tests/           Integration tests against a real PostgreSQL
-web/             The React dashboard
+web/             The React dashboard, the demo streaming site and the player SDK
 ```
 
 ## Scripts
@@ -184,7 +222,9 @@ For a real deployment, build the `production` image target and set `DATABASE_URL
 
 This is a working demonstration, not a system that has run under real load.
 
-- Sending the same event batch twice counts it twice, because events have no IDs.
+- Sending the same batch to `/events` twice counts it twice, because those events have no IDs. Player links ignore repeats, but only until the server restarts.
+- Videos are stored on local disk and streamed by the app, with no CDN or adaptive quality. The storage layer is ready for cloud storage.
+- The demo player takes its country and device from a menu, where a real service would detect them.
 - Budgets and goals are checked as events arrive, so a campaign can slightly overshoot under heavy traffic.
 - Each ad decision adds up the campaign's delivery. Real ad traffic would need a cache in front of this.
 - `/ad-decision` and `/events` share one API key, which suits a trusted ad server, not code running on viewers' devices.

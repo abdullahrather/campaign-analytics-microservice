@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { AccountPage } from './account';
 import { AdminPage, MailboxPage } from './admin';
 import { api, setExpiredHandler, type User } from './api';
+import { ReviewPage } from './creatives';
 import {
   AcceptInvitation,
   ForgotPassword,
@@ -129,6 +130,7 @@ const App = () => {
       return <AccountPage user={user} onChanged={reloadUser} />;
     }
     if (route.path === '/admin' && user.role === 'ADMIN') return <AdminPage user={user} />;
+    if (route.path === '/review' && user.role === 'ADMIN') return <ReviewPage />;
     return (
       <Overview key={user.organisationId} user={user} onOpen={(id) => go(`/campaigns/${id}`)} />
     );
@@ -140,6 +142,7 @@ const App = () => {
     { path: '/activity', label: 'Activity', show: seesActivity },
     { path: '/account', label: 'Account', show: !isGuest },
     { path: '/admin', label: 'Admin', show: user.role === 'ADMIN' },
+    { path: '/review', label: 'Ad review', show: user.role === 'ADMIN' },
   ].filter((link) => link.show);
 
   const isCurrent = (path: string): boolean =>
@@ -185,6 +188,9 @@ const App = () => {
             <span className="muted small who">{user.organisations[0]?.name}</span>
           )}
           <span className="muted small who">{roleLabel(user)}</span>
+          <a className="button" href="/watch">
+            Demo site
+          </a>
           <a className="button" href="/docs">
             API docs
           </a>

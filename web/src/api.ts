@@ -16,6 +16,9 @@ export interface User {
 export interface Totals {
   impressions: number;
   clicks: number;
+  firstQuartiles: number;
+  midpoints: number;
+  thirdQuartiles: number;
   completions: number;
   ctr: number;
   completionRate: number;
@@ -162,6 +165,28 @@ export interface CapturedEmail {
   createdAt: string;
 }
 
+export type CreativeStatus = 'PROCESSING' | 'PENDING_REVIEW' | 'APPROVED' | 'REJECTED' | 'FAILED';
+
+export interface Creative {
+  id: string;
+  campaignId: string;
+  name: string;
+  clickUrl: string;
+  status: CreativeStatus;
+  durationSeconds: number;
+  width: number;
+  height: number;
+  failureReason: string;
+  rejectionReason: string;
+  videoUrl: string;
+  posterUrl: string;
+  createdAt: string;
+}
+
+export interface ReviewItem extends Creative {
+  campaignTitle: string;
+}
+
 export interface TwoFactorChallenge {
   twoFactorRequired: true;
   challengeToken: string;
@@ -189,7 +214,8 @@ const send = (path: string, init: RequestInit): Promise<Response> =>
   fetch(path, {
     ...init,
     headers: {
-      ...(init.body ? { 'content-type': 'application/json' } : {}),
+      // Browsers set the type themselves for file uploads.
+      ...(typeof init.body === 'string' ? { 'content-type': 'application/json' } : {}),
       ...(token ? { authorization: `Bearer ${token}` } : {}),
     },
   });
@@ -303,6 +329,23 @@ export const api = {
   update: (id: string, input: Partial<CampaignInput>) =>
     request<{ id: string }>(`/campaigns/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
   remove: (id: string) => remove(`/campaigns/${id}`),
+
+  creatives: (campaignId: string) => request<Creative[]>(withSearch('/creatives', { campaignId })),
+  uploadCreative: (campaignId: string, name: string, clickUrl: string, file: File) => {
+    const body = new FormData();
+    body.append('campaignId', campaignId);
+    body.append('name', name);
+    body.append('clickUrl', clickUrl);
+    body.append('file', file);
+    return request<Creative>('/creatives', { method: 'POST', body });
+  },
+  deleteCreative: (id: string) => remove(`/creatives/${id}`),
+  reviewQueue: () => request<ReviewItem[]>('/admin/creatives'),
+  reviewCreative: (id: string, decision: 'APPROVE' | 'REJECT', reason: string) =>
+    post(
+      `/admin/creatives/${id}/review`,
+      decision === 'REJECT' ? { decision, reason } : { decision },
+    ),
 
   updateProfile: (name: string) => patch('/account/profile', { name }),
   changePassword: (currentPassword: string, newPassword: string) =>

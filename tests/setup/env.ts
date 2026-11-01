@@ -4,6 +4,8 @@
  * Runs before each test file's imports, so the app's config and Prisma client
  * can only ever connect to the test database.
  */
+import os from 'os';
+import path from 'path';
 import dotenv from 'dotenv';
 
 dotenv.config({ quiet: true });
@@ -17,3 +19,5 @@ process.env['JWT_SECRET'] ??= 'test-secret-that-is-at-least-32-characters';
 process.env['INGEST_API_KEY'] ??= 'test-ingest-key-1234';
 process.env['ENCRYPTION_KEY'] ??= 'test-encryption-key-that-is-long-enough';
 process.env['LOGIN_RATE_LIMIT'] = '100000';
+process.env['PLAYER_RATE_LIMIT'] = '100000';
+process.env['MEDIA_DIR'] = path.join(os.tmpdir(), 'streaming-ad-platform-test-media');

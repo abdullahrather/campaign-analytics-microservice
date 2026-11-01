@@ -7,7 +7,7 @@
  * as a single upsert into the hourly metrics table, which keeps ingestion cheap
  * and the table small enough for dashboards to read quickly.
  */
-import { Prisma } from '@prisma/client';
+import { CreativeStatus, Prisma, type Creative } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import type { AdDecisionQuery, AdEvent } from './delivery.schema';
 
@@ -17,6 +17,8 @@ export interface AdDecision {
   campaignId: string;
   title: string;
   advertiser: string;
+  /** Set when the caller asked for a campaign that has a playable ad. */
+  creative?: Creative;
 }
 
 export interface IngestResult {
@@ -34,6 +36,9 @@ interface Rollup {
   bucket: string;
   impressions: number;
   clicks: number;
+  firstQuartiles: number;
+  midpoints: number;
+  thirdQuartiles: number;
   completions: number;
 }
 
@@ -55,10 +60,16 @@ const rollUp = (events: AdEvent[]): Rollup[] => {
       bucket,
       impressions: 0,
       clicks: 0,
+      firstQuartiles: 0,
+      midpoints: 0,
+      thirdQuartiles: 0,
       completions: 0,
     };
     if (event.type === 'IMPRESSION') rollup.impressions += 1;
     if (event.type === 'CLICK') rollup.clicks += 1;
+    if (event.type === 'FIRST_QUARTILE') rollup.firstQuartiles += 1;
+    if (event.type === 'MIDPOINT') rollup.midpoints += 1;
+    if (event.type === 'THIRD_QUARTILE') rollup.thirdQuartiles += 1;
     if (event.type === 'COMPLETION') rollup.completions += 1;
     rollups.set(key, rollup);
   }
@@ -71,7 +82,17 @@ export class DeliveryService {
    * Picks the eligible campaign that is furthest behind its delivery schedule.
    * Ties go to the higher CPM. Returns null when nothing can run here.
    */
-  async decide(query: AdDecisionQuery): Promise<AdDecision | null> {
+  async decide(
+    query: AdDecisionQuery,
+    { requireCreative = false }: { requireCreative?: boolean } = {},
+  ): Promise<AdDecision | null> {
+    const hasCreative = requireCreative
+      ? Prisma.sql`EXISTS (
+          SELECT 1 FROM creatives cr
+          WHERE cr.campaign_id = c.id AND cr.status = 'APPROVED'
+        )`
+      : Prisma.sql`TRUE`;
+
     const rows = await prisma.$queryRaw<AdDecision[]>(Prisma.sql`
       SELECT c.id AS "campaignId", c.title, c.advertiser
       FROM campaigns c
@@ -82,6 +103,7 @@ export class DeliveryService {
         WHERE m.campaign_id = c.id
       ) d
       WHERE c.status = 'ACTIVE'
+        AND ${hasCreative}
         AND now() >= c.starts_at AND now() < c.ends_at
         AND d.delivered < c.impression_goal
         AND d.delivered * c.cpm_cents / 1000 < c.budget_cents
@@ -101,7 +123,14 @@ export class DeliveryService {
       LIMIT 1
     `);
 
-    return rows[0] ?? null;
+    const decision = rows[0];
+    if (!decision || !requireCreative) return decision ?? null;
+
+    const creatives = await prisma.creative.findMany({
+      where: { campaignId: decision.campaignId, status: CreativeStatus.APPROVED },
+    });
+    const creative = creatives[Math.floor(Math.random() * creatives.length)];
+    return creative ? { ...decision, creative } : null;
   }
 
   /**
@@ -115,9 +144,11 @@ export class DeliveryService {
 
     const written = await prisma.$executeRaw(Prisma.sql`
       INSERT INTO metrics
-        (campaign_id, show_id, slot, country, device, bucket, impressions, clicks, completions)
+        (campaign_id, show_id, slot, country, device, bucket, impressions, clicks,
+         first_quartiles, midpoints, third_quartiles, completions)
       SELECT t.campaign_id, t.show_id, t.slot::"AdSlot", t.country, t.device::"Device",
-        t.bucket::timestamptz, t.impressions, t.clicks, t.completions
+        t.bucket::timestamptz, t.impressions, t.clicks,
+        t.first_quartiles, t.midpoints, t.third_quartiles, t.completions
       FROM unnest(
         ${column('campaignId')}::text[],
         ${column('showId')}::text[],
@@ -127,13 +158,20 @@ export class DeliveryService {
         ${column('bucket')}::text[],
         ${column('impressions')}::int[],
         ${column('clicks')}::int[],
+        ${column('firstQuartiles')}::int[],
+        ${column('midpoints')}::int[],
+        ${column('thirdQuartiles')}::int[],
         ${column('completions')}::int[]
-      ) AS t(campaign_id, show_id, slot, country, device, bucket, impressions, clicks, completions)
+      ) AS t(campaign_id, show_id, slot, country, device, bucket, impressions, clicks,
+             first_quartiles, midpoints, third_quartiles, completions)
       JOIN campaigns c ON c.id = t.campaign_id
       JOIN shows s ON s.id = t.show_id
       ON CONFLICT (campaign_id, bucket, show_id, slot, country, device) DO UPDATE SET
         impressions = metrics.impressions + EXCLUDED.impressions,
         clicks = metrics.clicks + EXCLUDED.clicks,
+        first_quartiles = metrics.first_quartiles + EXCLUDED.first_quartiles,
+        midpoints = metrics.midpoints + EXCLUDED.midpoints,
+        third_quartiles = metrics.third_quartiles + EXCLUDED.third_quartiles,
         completions = metrics.completions + EXCLUDED.completions
     `);
 

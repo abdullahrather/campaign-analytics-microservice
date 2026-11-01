@@ -22,7 +22,14 @@ export type AdDecisionQuery = z.infer<typeof adDecisionQuerySchema>;
 
 const eventSchema = z.object({
   ...placement,
-  type: z.enum(['IMPRESSION', 'CLICK', 'COMPLETION']),
+  type: z.enum([
+    'IMPRESSION',
+    'FIRST_QUARTILE',
+    'MIDPOINT',
+    'THIRD_QUARTILE',
+    'COMPLETION',
+    'CLICK',
+  ]),
   campaignId: z.string().min(1),
   occurredAt: z.coerce
     .date()

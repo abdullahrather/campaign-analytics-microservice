@@ -26,6 +26,8 @@ const Stats = ({ stats }: { stats: AdminStats }) => {
     ['Campaigns', stats.campaigns],
     ['Active sessions', stats.activeSessions],
     ['Suspended users', stats.suspendedUsers],
+    ['Events waiting to save', stats.eventBacklog],
+    ['Invalid traffic, last 24 hours', stats.filteredLastDay],
   ] as const;
 
   return (

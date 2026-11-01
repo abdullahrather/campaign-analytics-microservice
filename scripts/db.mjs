@@ -1,5 +1,6 @@
-// Local PostgreSQL that runs from node_modules, so no Docker or system install is needed.
-// Data lives in .data/postgres. An already running server on the port is reused.
+// Local services. PostgreSQL runs from node_modules, with data in .data/postgres, and Redis
+// runs in Docker. A server already listening on its port is reused.
+import { spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';
@@ -37,6 +38,21 @@ const isListening = (port) =>
     socket.once('connect', () => (socket.destroy(), resolve(true)));
     socket.once('error', () => resolve(false));
   });
+
+/** Starts Redis in Docker if needed. It keeps running, because it holds queued events. */
+export const startRedis = async () => {
+  const port = Number(new URL(process.env.REDIS_URL ?? 'redis://localhost:6379').port || 6379);
+  if (await isListening(port)) return;
+
+  const { status } = spawnSync('docker', ['compose', 'up', '-d', '--wait', 'redis'], {
+    cwd: ROOT,
+    stdio: ['ignore', 'ignore', 'inherit'],
+  });
+  if (status !== 0) {
+    throw new Error('Redis could not start. Check that Docker Desktop is running.');
+  }
+  console.info(`Redis ready on port ${port}.`);
+};
 
 /** Starts PostgreSQL if needed and returns a function that stops it. */
 export const startDatabase = async () => {

@@ -11,6 +11,7 @@ import { Prisma, type Campaign } from '@prisma/client';
 import { seesAllOrganisations, type Actor } from '@/lib/actor';
 import { prisma } from '@/lib/prisma';
 import { AppError } from '@/middleware/errorHandler';
+import { decisionCache } from '@/modules/delivery/decision-cache';
 import type {
   CreateCampaignDto,
   DateRange,
@@ -201,15 +202,19 @@ export class CampaignsService {
       throw new AppError(422, 'End date must be after the start date.');
     }
 
-    return prisma.campaign.update({
+    const updated = await prisma.campaign.update({
       where: { id },
       data: definedOnly(dto) as Prisma.CampaignUpdateInput,
     });
+    decisionCache.invalidate();
+    return updated;
   }
 
   async deleteCampaign(id: string, actor: Actor): Promise<Campaign> {
     await this.findOneOrFail(id, actor);
-    return prisma.campaign.delete({ where: { id } });
+    const deleted = await prisma.campaign.delete({ where: { id } });
+    decisionCache.invalidate();
+    return deleted;
   }
 
   /**
@@ -307,6 +312,19 @@ export class CampaignsService {
     `);
 
     return rows.map((row) => ({ time: row.time, ...toTotals(row) }));
+  }
+
+  /** Traffic rejected as invalid, by reason. Call after checking the actor can see the campaign. */
+  async getFiltered(
+    campaignId: string,
+    range: DateRange,
+  ): Promise<Array<{ reason: string; count: number }>> {
+    const rows = await prisma.filteredEvent.groupBy({
+      by: ['reason'],
+      where: { campaignId, bucket: { gte: range.from, lt: range.to } },
+      _sum: { count: true },
+    });
+    return rows.map(({ reason, _sum }) => ({ reason, count: _sum.count ?? 0 }));
   }
 
   /** Performance by slot, country, device and show in one GROUPING SETS query. */

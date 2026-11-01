@@ -23,7 +23,7 @@ import {
   twoFactorChallengeSchema,
 } from '@/modules/auth/auth.schema';
 import { createCampaignSchema, updateCampaignSchema } from '@/modules/campaigns/campaigns.schema';
-import { eventBatchSchema } from '@/modules/delivery/delivery.schema';
+import { eventBatchSchema, playerTokenSchema } from '@/modules/delivery/delivery.schema';
 import {
   acceptInvitationSchema,
   changeRoleSchema,
@@ -564,6 +564,23 @@ export const openApiDocument = {
         responses: responses('200', 'File', '404'),
       },
     },
+    '/player-tokens': {
+      post: {
+        ...adServer,
+        summary: 'Exchange the ad server key for a 15-minute player token',
+        description: "Call this from a publisher's server, never from a player.",
+        requestBody: jsonBody(playerTokenSchema),
+        responses: responses('201', 'A player token', '401', '422'),
+      },
+    },
+    '/player/session': {
+      post: {
+        tags: ['Playback'],
+        summary: 'Get a player token for the demo site',
+        description: "Stands in for a publisher's server. Closed in production.",
+        responses: responses('201', 'A player token', '404'),
+      },
+    },
     '/player/catalogue': {
       get: {
         tags: ['Playback'],
@@ -575,14 +592,17 @@ export const openApiDocument = {
       get: {
         tags: ['Playback'],
         summary: 'Get an ad for an ad break as VAST 4.2 XML',
-        description: 'An empty VAST document means nothing can run in this break.',
+        description:
+          'An empty VAST document means nothing can run in this break, or the request was ' +
+          'filtered as invalid traffic.',
         parameters: [
+          query('token', 'Player token', true),
           query('showId', 'Show ID', true),
           query('slot', 'PRE_ROLL, MID_ROLL or POST_ROLL', true),
           query('country', 'Two-letter country code', true),
           query('device', 'CTV, MOBILE, WEB or TABLET', true),
         ],
-        responses: responses('200', 'VAST XML', '422'),
+        responses: responses('200', 'VAST XML', '401', '422'),
       },
     },
     '/track/{event}': {
@@ -629,7 +649,10 @@ export const openApiDocument = {
     '/events': {
       post: {
         ...adServer,
-        summary: 'Record a batch of up to 1,000 ad events',
+        summary: 'Queue a batch of up to 1,000 ad events',
+        description:
+          'Each event needs a unique eventId and an occurredAt within the last hour. Sending a ' +
+          'batch twice is safe: repeats are dropped. Totals update shortly after.',
         requestBody: jsonBody(eventBatchSchema),
         responses: responses('202', 'Accepted', '401', '422'),
       },

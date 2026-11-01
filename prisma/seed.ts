@@ -20,6 +20,7 @@ import {
 import type { Prisma } from '@prisma/client';
 import { randomBytes } from 'crypto';
 import bcrypt from 'bcryptjs';
+import { Redis } from 'ioredis';
 import {
   AD_LENGTH,
   EPISODE_LENGTH,
@@ -262,6 +263,13 @@ async function createDemoMedia(
   });
 }
 
+/** Queued events and counters belong to the data being replaced. */
+async function clearLiveCounters(): Promise<void> {
+  const redis = new Redis(process.env['REDIS_URL'] ?? 'redis://localhost:6379');
+  await redis.flushdb();
+  redis.disconnect();
+}
+
 async function main(): Promise<void> {
   const isDemo = process.env['DEMO_MODE'] === 'true';
   if (process.env['NODE_ENV'] === 'production' && !isDemo) {
@@ -284,6 +292,7 @@ async function main(): Promise<void> {
     bcrypt.hash(isDemo ? randomBytes(24).toString('hex') : demoPassword, 12);
 
   console.info('Seeding demo data...');
+  await clearLiveCounters();
   await prisma.metric.deleteMany();
   await prisma.campaign.deleteMany();
   await prisma.show.deleteMany();

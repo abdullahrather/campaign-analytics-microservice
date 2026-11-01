@@ -29,6 +29,7 @@ import { showsRouter } from '@/modules/shows/shows.routes';
 import { invitationsRouter, teamRouter } from '@/modules/team/team.routes';
 import { errorHandler } from '@/middleware/errorHandler';
 import { prisma } from '@/lib/prisma';
+import { redis } from '@/lib/redis';
 import { env } from '@/config/env';
 
 const DASHBOARD_DIR = path.resolve(process.cwd(), 'web', 'dist');
@@ -64,9 +65,9 @@ export function createApp(): Application {
   });
 
   app.get('/health', (_req: Request, res: Response) => {
-    prisma.$queryRaw`SELECT 1`
+    Promise.all([prisma.$queryRaw`SELECT 1`, redis.ping()])
       .then(() => res.status(200).json({ status: 'ok', environment: env.NODE_ENV }))
-      .catch(() => res.status(503).json({ status: 'error', message: 'Database unavailable.' }));
+      .catch(() => res.status(503).json({ status: 'error', message: 'A service is unavailable.' }));
   });
 
   // ── API routes ────────────────────────────────────────────────────────────

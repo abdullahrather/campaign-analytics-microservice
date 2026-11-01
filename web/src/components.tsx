@@ -279,6 +279,29 @@ export const Breakdown = ({
   );
 };
 
+const FILTER_REASONS: Record<string, string> = {
+  BOT_USER_AGENT: 'Bots and crawlers',
+  EXCESSIVE_REQUESTS: 'Too many requests from one viewer',
+  IMPOSSIBLE_TIMING: 'Finished impossibly fast',
+};
+
+/** Traffic that was rejected, so it was never counted or charged. */
+export const FilteredTraffic = ({ rows }: { rows: Array<{ reason: string; count: number }> }) =>
+  rows.length === 0 ? null : (
+    <section className="card">
+      <h2>Invalid traffic removed</h2>
+      <p className="muted small">Not counted in these results, and not charged.</p>
+      <ul className="rows">
+        {rows.map(({ reason, count }) => (
+          <li key={reason}>
+            <span>{FILTER_REASONS[reason] ?? reason}</span>
+            <span className="bar-value">{formatNumber(count)}</span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+
 /** How far viewers get through an ad, as a share of everyone who started it. */
 export const ViewerDropOff = ({ totals }: { totals: Totals }) => {
   const stages = [

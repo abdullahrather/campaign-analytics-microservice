@@ -1,6 +1,11 @@
 # Public demo on Render's free plan. The database is hosted separately on Neon,
 # because Render's free databases expire. Use Neon's direct connection string.
 services:
+  - type: keyvalue
+    name: campaign-analytics-redis
+    region: frankfurt
+    plan: free
+    ipAllowList: []
   - type: web
     name: campaign-analytics-demo
     runtime: docker
@@ -11,6 +16,11 @@ services:
     envVars:
       - key: DATABASE_URL
         sync: false
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: campaign-analytics-redis
+          property: connectionString
       - key: JWT_SECRET
         generateValue: true
       - key: INGEST_API_KEY

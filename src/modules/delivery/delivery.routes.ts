@@ -11,6 +11,7 @@ import { Router } from 'express';
 import { requireIngestKey } from '@/middleware/ingestKey';
 import { adDecisionQuerySchema, eventBatchSchema } from './delivery.schema';
 import { deliveryService } from './delivery.service';
+import { enqueueEvents } from './event-queue';
 
 const deliveryRouter = Router();
 
@@ -31,7 +32,7 @@ deliveryRouter.post('/events', requireIngestKey, (req, res, next) => {
   void (async (): Promise<void> => {
     try {
       const { events } = eventBatchSchema.parse(req.body);
-      const data = await deliveryService.ingest(events);
+      const data = await enqueueEvents(events);
 
       res.status(202).json({ status: 'success', data });
     } catch (error) {

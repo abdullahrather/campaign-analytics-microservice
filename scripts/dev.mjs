@@ -3,7 +3,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { ROOT, ensureEnv, startDatabase } from './db.mjs';
+import { ROOT, ensureEnv, startDatabase, startRedis } from './db.mjs';
 
 const bin = (file) => path.join(ROOT, file);
 const TSX = bin('node_modules/tsx/dist/cli.mjs');
@@ -23,6 +23,7 @@ if (!fs.existsSync(VITE)) {
   spawnSync(npm, ['ci', '--prefix', 'web'], { cwd: ROOT, stdio: 'inherit', shell: true });
 }
 
+await startRedis();
 const stopDatabase = await startDatabase();
 runNode(PRISMA, 'migrate', 'deploy');
 runNode(TSX, 'prisma/seed.ts', '--if-empty');

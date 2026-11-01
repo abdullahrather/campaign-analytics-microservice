@@ -212,13 +212,18 @@ describe('Uploading ads', () => {
     const stranger = await createTestUser({ email: 'stranger@test.com' });
     const guest = await createTestUser({ email: 'guest@test.com', role: Role.GUEST });
     const campaign = await createTestCampaign(owner.id);
-    const analystCampaign = await createTestCampaign(analyst.id);
 
-    const byAnalyst = await upload(await login(analyst), analystCampaign.id, notVideo);
+    // Roles are refused before the body is read, so these requests don't send a file.
+    const refuse = async (user: { email: string; password: string }) =>
+      request(app)
+        .post('/creatives')
+        .set('Authorization', await login(user));
+
+    const byAnalyst = await refuse(analyst);
+    const byGuest = await refuse(guest);
     const byStranger = await upload(await login(stranger), campaign.id, notVideo);
-    const byGuest = await upload(await login(guest), campaign.id, notVideo);
 
-    expect([byAnalyst.status, byStranger.status, byGuest.status]).toEqual([403, 404, 403]);
+    expect([byAnalyst.status, byGuest.status, byStranger.status]).toEqual([403, 403, 404]);
   });
 
   it('hides another company’s ads', async () => {

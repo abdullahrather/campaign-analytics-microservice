@@ -7,6 +7,7 @@ import net from 'node:net';
 import path from 'node:path';
 import dotenv from 'dotenv';
 import EmbeddedPostgres from 'embedded-postgres';
+import pg from 'pg';
 
 export const ROOT = path.resolve(import.meta.dirname, '..');
 
@@ -39,6 +40,64 @@ const isListening = (port) =>
     socket.once('error', () => resolve(false));
   });
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** An open port isn't enough: a server that's shutting down still holds it. */
+const answersQueries = async (url) => {
+  const client = new pg.Client({
+    host: '127.0.0.1',
+    port: Number(url.port),
+    user: url.username,
+    password: url.password,
+    database: 'postgres',
+    connectionTimeoutMillis: 3000,
+  });
+  try {
+    await client.connect();
+    await client.query('SELECT 1');
+    return true;
+  } catch {
+    return false;
+  } finally {
+    await client.end().catch(() => {});
+  }
+};
+
+/** On Windows, stops this project's PostgreSQL processes, which never touches another install. */
+const stopWindowsPostgres = () => {
+  const projectPath = ROOT.replace(/\\/g, '/');
+  const script = `Get-CimInstance Win32_Process -Filter "Name='postgres.exe'" |
+    Where-Object { $_.CommandLine -like '*${projectPath}*' } |
+    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`;
+  spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', script], { stdio: 'ignore' });
+};
+
+/**
+ * Clears a stuck server. A stranded child process can hold the port after the
+ * main process exits, so stopping the process in postmaster.pid isn't enough.
+ */
+const removeStuckServer = async (port, databaseDir) => {
+  const pidFile = path.join(databaseDir, 'postmaster.pid');
+  console.info("PostgreSQL isn't responding. Restarting it.");
+
+  if (process.platform === 'win32') {
+    stopWindowsPostgres();
+  } else if (fs.existsSync(pidFile)) {
+    try {
+      const [pid] = fs.readFileSync(pidFile, 'utf8').split(/\r?\n/);
+      process.kill(Number(pid), 'SIGKILL');
+    } catch {
+      // It has already gone.
+    }
+  }
+
+  for (let attempt = 0; attempt < 30 && (await isListening(port)); attempt += 1) await sleep(200);
+  if (await isListening(port)) {
+    throw new Error(`Port ${port} is in use by something that isn't answering as PostgreSQL.`);
+  }
+  fs.rmSync(pidFile, { force: true });
+};
+
 /** Starts Redis in Docker if needed. It keeps running, because it holds queued events. */
 export const startRedis = async () => {
   const port = Number(new URL(process.env.REDIS_URL ?? 'redis://localhost:6379').port || 6379);
@@ -58,9 +117,18 @@ export const startRedis = async () => {
 export const startDatabase = async () => {
   const url = new URL(process.env.DATABASE_URL);
   const port = Number(url.port);
-  if (await isListening(port)) return async () => {};
-
   const databaseDir = path.join(ROOT, '.data', 'postgres');
+
+  if (await isListening(port)) {
+    // A server that's shutting down needs a moment before it can be replaced.
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      if (await answersQueries(url)) return async () => {};
+      if (!(await isListening(port))) break;
+      await sleep(500);
+    }
+    if (await isListening(port)) await removeStuckServer(port, databaseDir);
+  }
+
   const postgres = new EmbeddedPostgres({
     databaseDir,
     user: url.username,

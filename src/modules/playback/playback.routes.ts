@@ -97,6 +97,23 @@ const record = (claims: TrackingClaims, type: TrackedEvent): Promise<unknown> =>
     },
   ]);
 
+/** Saves an event once. A failed save is forgotten, so the player's retry still counts. */
+const recordOnce = async (
+  claims: TrackingClaims,
+  type: TrackedEvent,
+  name: string,
+): Promise<void> => {
+  const key = `${claims.jti}:${name}`;
+  if (!firstTime(key)) return;
+
+  try {
+    await record(claims, type);
+  } catch (error) {
+    remembered.delete(key);
+    throw error;
+  }
+};
+
 /** What the demo streaming site can play. */
 playbackRouter.get(
   '/player/catalogue',
@@ -184,7 +201,7 @@ playbackRouter.get(
     if (name !== 'start') {
       const type = EVENTS[name];
       if (!type) throw new AppError(404, 'Unknown event.');
-      if (firstTime(`${claims.jti}:${name}`)) await record(claims, type);
+      await recordOnce(claims, type, name);
     }
 
     res.status(204).end();
@@ -199,7 +216,10 @@ playbackRouter.get(
     const creative = await prisma.creative.findUnique({ where: { id: claims.creativeId } });
     if (!creative) throw new AppError(404, 'This ad is no longer available.');
 
-    if (firstTime(`${claims.jti}:click`)) await record(claims, 'CLICK');
+    // A failed save shouldn't stop the viewer reaching the advertiser's page.
+    await recordOnce(claims, 'CLICK', 'click').catch((error: unknown) =>
+      console.error('Click not recorded:', String(error)),
+    );
     res.redirect(302, creative.clickUrl);
   }),
 );

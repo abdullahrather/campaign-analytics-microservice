@@ -13,6 +13,7 @@ import { CreativeStatus, OrganisationRole, Role } from '@prisma/client';
 import { createApp } from '@/app';
 import { storage } from '@/lib/storage';
 import { probeVideo } from '@/lib/video';
+import { deliveryService } from '@/modules/delivery/delivery.service';
 import { runTrafficTick } from '@/modules/demo/traffic';
 import {
   clearDatabase,
@@ -447,6 +448,39 @@ describe('Serving ads through VAST', () => {
       thirdQuartiles: 1,
       completions: 1,
     });
+  });
+
+  it('counts an event when the player retries after a failed save', async () => {
+    const { xml, campaign } = await served();
+    const url = new URL(matchAll(xml, 'Impression')[0] as string);
+    const link = url.pathname + url.search;
+    jest.spyOn(deliveryService, 'ingest').mockRejectedValueOnce(new Error('Database down'));
+    const failure = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    const first = await request(app).get(link);
+    const retry = await request(app).get(link);
+    failure.mockRestore();
+
+    expect(first.status).toBe(500);
+    expect(retry.status).toBe(204);
+    expect((await metric(campaign.id))?.impressions).toBe(1);
+  });
+
+  it('still sends the viewer on when a click cannot be saved, and counts a retry', async () => {
+    const { xml, campaign } = await served();
+    const url = new URL(matchAll(xml, 'ClickThrough')[0] as string);
+    const link = url.pathname + url.search;
+    jest.spyOn(deliveryService, 'ingest').mockRejectedValueOnce(new Error('Database down'));
+    const failure = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    const first = await request(app).get(link);
+    const retry = await request(app).get(link);
+    failure.mockRestore();
+
+    expect(first.status).toBe(302);
+    expect(first.headers['location']).toBe('https://example.com/offer');
+    expect(retry.status).toBe(302);
+    expect((await metric(campaign.id))?.clicks).toBe(1);
   });
 
   it('records a click and sends the viewer to the advertiser', async () => {
